@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Boka Bord — Stockholm</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <div class="header-inner">
+      <h1>Boka Bord</h1>
+      <p class="tagline">Stockholms finaste restauranger — tre månader framöver</p>
+    </div>
+  </header>
+
+  <main>
+    <div id="restaurants"></div>
+  </main>
+
+  <footer>
+    <p>Tillgänglighetsdata är indikativ. Slutgiltig bokning sker hos respektive restaurang.</p>
+  </footer>
+
+  <div id="modal" class="modal hidden">
+    <div class="modal-backdrop"></div>
+    <div class="modal-box">
+      <button class="modal-close" id="modal-close">&times;</button>
+      <div id="modal-content"></div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
