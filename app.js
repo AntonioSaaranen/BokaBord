@@ -1,6 +1,68 @@
 'use strict';
 
+const API_BASE = 'http://localhost:3000/api';
+
+// Live availability data fetched from the scraper API
+// Falls back to simulated data if server is not running
+const liveAvailability = {}; // { restaurantId: { 'YYYY-MM-DD': status } }
+
+async function fetchAvailability(restaurantId) {
+  setCardLoading(restaurantId, true);
+  try {
+    const res = await fetch(`${API_BASE}/availability/${restaurantId}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (data.availability && Object.keys(data.availability).length > 0) {
+      liveAvailability[restaurantId] = data.availability;
+      console.log(`[${restaurantId}] loaded ${Object.keys(data.availability).length} dates from API`);
+      setCardLoading(restaurantId, false);
+      setCardSource(restaurantId, 'live');
+      return true;
+    }
+  } catch (err) {
+    console.warn(`[${restaurantId}] API unavailable, using simulated data:`, err.message);
+  }
+  setCardLoading(restaurantId, false);
+  setCardSource(restaurantId, 'simulated');
+  return false;
+}
+
+function setCardLoading(restaurantId, loading) {
+  const card = document.getElementById(restaurantId);
+  if (!card) return;
+  card.classList.toggle('cal-loading', loading);
+}
+
+function setCardSource(restaurantId, source) {
+  const card = document.getElementById(restaurantId);
+  if (!card) return;
+  const badge = card.querySelector('.source-badge');
+  if (!badge) return;
+  badge.dataset.source = source;
+  badge.textContent = source === 'live' ? 'Live' : 'Simulerat';
+}
+
 const RESTAURANTS = [
+  {
+    id: 'ekstedt',
+    name: 'Ekstedt',
+    cuisine: 'Nordisk · Vedeldad',
+    desc: 'Bjorn Frantzéns unika kök tillagas enbart med öppen eld, hett järn och rök. En av Stockholms mest originella upplevelser.',
+    bookingUrl: 'https://www.ekstedt.nu/reservations',
+    closedDays: [0, 1], // Sun + Mon
+    times: ['18:00', '18:30', '19:00', '19:30', '20:00', '20:30', '21:00'],
+    popularity: 0.75,
+  },
+  {
+    id: 'oaxen-krog',
+    name: 'Oaxen Krog',
+    cuisine: 'Nordisk · 2 Michelin-stjärnor',
+    desc: 'Magnus Eks och Agneta Greens hållbara krog på Djurgården. Djup råvarukunskap och nordisk elegans i vackra lokaler vid vattnet.',
+    bookingUrl: 'https://www.oaxen.com/en/reservations/',
+    closedDays: [0, 1, 2], // Sun + Mon + Tue
+    times: ['18:00', '18:30', '19:00', '19:30', '20:00'],
+    popularity: 0.8,
+  },
   {
     id: 'lilla-ego',
     name: 'Lilla Ego',
@@ -50,6 +112,14 @@ function seededRand(seed) {
 }
 
 function getAvailability(restaurantId, date, popularity) {
+  // Use live data if available
+  const live = liveAvailability[restaurantId];
+  if (live) {
+    const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    const status = live[key];
+    if (status && status !== 'unknown') return status;
+  }
+  // Simulated fallback
   const seed = date.getFullYear() * 10000 + (date.getMonth() + 1) * 100 + date.getDate()
     + restaurantId.split('').reduce((a, c) => a + c.charCodeAt(0), 0);
   const r = seededRand(seed);
@@ -159,6 +229,11 @@ function buildRestaurantCard(restaurant) {
     <div class="cuisine">${restaurant.cuisine}</div>
     <div class="desc">${restaurant.desc}</div>
   `;
+  const sourceBadge = document.createElement('span');
+  sourceBadge.className = 'source-badge';
+  sourceBadge.dataset.source = 'loading';
+  sourceBadge.textContent = 'Hämtar…';
+  meta.appendChild(sourceBadge);
 
   const bookBtn = document.createElement('a');
   bookBtn.className = 'book-btn';
@@ -223,6 +298,10 @@ function buildRestaurantCard(restaurant) {
   `;
   calSection.appendChild(legend);
 
+  const spinner = document.createElement('div');
+  spinner.className = 'cal-spinner';
+  calSection.appendChild(spinner);
+
   card.appendChild(calSection);
 
   showMonth(0);
@@ -235,7 +314,10 @@ function formatDateSv(date) {
     + MONTHS_SV[date.getMonth()].toLowerCase() + ' ' + date.getFullYear();
 }
 
+let modalGuestCount = 2;
+
 function openModal(restaurant, date) {
+  modalGuestCount = 2;
   const modal = document.getElementById('modal');
   const content = document.getElementById('modal-content');
   const slots = getTimeSlots(restaurant, date);
@@ -251,12 +333,33 @@ function openModal(restaurant, date) {
   content.innerHTML = `
     <div class="modal-date">${formatDateSv(date)}</div>
     <div class="modal-restaurant">${restaurant.name}</div>
+    <div class="guest-picker">
+      <span class="guest-label">Antal gäster</span>
+      <div class="guest-controls">
+        <button class="guest-btn" id="guest-dec">−</button>
+        <span class="guest-num" id="guest-count">2</span>
+        <button class="guest-btn" id="guest-inc">+</button>
+      </div>
+    </div>
     <div class="time-slots">${slotsHtml}</div>
     <a class="modal-book-btn" href="${restaurant.bookingUrl}" target="_blank" rel="noopener noreferrer">
       Gå till bokning
     </a>
     ${noteHtml}
   `;
+
+  document.getElementById('guest-dec').addEventListener('click', () => {
+    if (modalGuestCount > 1) {
+      modalGuestCount--;
+      document.getElementById('guest-count').textContent = modalGuestCount;
+    }
+  });
+  document.getElementById('guest-inc').addEventListener('click', () => {
+    if (modalGuestCount < 10) {
+      modalGuestCount++;
+      document.getElementById('guest-count').textContent = modalGuestCount;
+    }
+  });
 
   modal.classList.remove('hidden');
 }
@@ -269,6 +372,19 @@ document.getElementById('modal-close').addEventListener('click', closeModal);
 document.querySelector('.modal-backdrop').addEventListener('click', closeModal);
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
 
-// Render all restaurants
+// Render all restaurants, then fetch live data and refresh calendars
 const container = document.getElementById('restaurants');
 RESTAURANTS.forEach(r => container.appendChild(buildRestaurantCard(r)));
+
+// Fetch live availability and re-render calendars when data arrives
+RESTAURANTS.forEach(async (r) => {
+  const fetched = await fetchAvailability(r.id);
+  if (fetched) {
+    // Re-render the active month calendar for this restaurant
+    const card = document.getElementById(r.id);
+    if (!card) return;
+    const tabs = card.querySelectorAll('.tab-btn');
+    const activeTab = [...tabs].findIndex(t => t.classList.contains('active'));
+    tabs[activeTab >= 0 ? activeTab : 0]?.click();
+  }
+});
