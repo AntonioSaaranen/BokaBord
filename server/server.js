@@ -3,7 +3,7 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
-const { scrapeBokabord } = require('./scrapers/bokabord');
+const { scrapeBokabord, scrapeTimeslots } = require('./scrapers/bokabord');
 const { scrapeFrantzen } = require('./scrapers/frantzen');
 
 const app = express();
@@ -15,9 +15,10 @@ app.use(cors());
 
 // In-memory cache: { key: { data, expiresAt } }
 const cache = new Map();
-const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
+const CACHE_TTL_MS = 30 * 60 * 1000;        // 30 min för tillgänglighet
+const TIMESLOT_TTL_MS = 5 * 60 * 1000;      // 5 min för tidsluckor
 
-function cached(key, fetchFn) {
+function cached(key, fetchFn, ttl = CACHE_TTL_MS) {
   const entry = cache.get(key);
   if (entry && entry.expiresAt > Date.now()) {
     console.log(`[cache] hit: ${key}`);
@@ -25,7 +26,7 @@ function cached(key, fetchFn) {
   }
   console.log(`[cache] miss: ${key} — scraping...`);
   return fetchFn().then((data) => {
-    cache.set(key, { data, expiresAt: Date.now() + CACHE_TTL_MS });
+    cache.set(key, { data, expiresAt: Date.now() + ttl });
     return data;
   });
 }
@@ -33,12 +34,12 @@ function cached(key, fetchFn) {
 // Scrape status tracker to prevent parallel scrapes of same restaurant
 const inFlight = new Map();
 
-function singleFlight(key, fetchFn) {
+function singleFlight(key, fetchFn, ttl = CACHE_TTL_MS) {
   if (inFlight.has(key)) {
     console.log(`[inflight] waiting for existing scrape: ${key}`);
     return inFlight.get(key);
   }
-  const promise = cached(key, fetchFn).finally(() => inFlight.delete(key));
+  const promise = cached(key, fetchFn, ttl).finally(() => inFlight.delete(key));
   inFlight.set(key, promise);
   return promise;
 }
@@ -87,6 +88,32 @@ app.get('/api/availability', async (req, res) => {
       'oaxen-krog': oaxenKrog.status === 'fulfilled' ? oaxenKrog.value : { error: oaxenKrog.reason?.message },
     });
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/timeslots/:restaurant?date=YYYY-MM-DD&guests=2
+app.get('/api/timeslots/:restaurant', async (req, res) => {
+  const { restaurant } = req.params;
+  const { date, guests = '2' } = req.query;
+
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return res.status(400).json({ error: 'date krävs i formatet YYYY-MM-DD' });
+  }
+
+  const guestsNum = Math.max(1, Math.min(10, parseInt(guests) || 2));
+  const supported = ['lilla-ego', 'hantverket'];
+
+  if (!supported.includes(restaurant)) {
+    return res.status(404).json({ error: 'Tidsluckor ej tillgängliga för denna restaurang' });
+  }
+
+  const key = `timeslots:${restaurant}:${date}:${guestsNum}`;
+  try {
+    const data = await singleFlight(key, () => scrapeTimeslots(restaurant, date, guestsNum), TIMESLOT_TTL_MS);
+    res.json(data);
+  } catch (err) {
+    console.error(`[timeslots] ${restaurant} ${date}:`, err.message);
     res.status(500).json({ error: err.message });
   }
 });

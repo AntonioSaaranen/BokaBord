@@ -256,7 +256,7 @@ function buildRestaurantCard(restaurant) {
   const tabs = document.createElement('div');
   tabs.className = 'calendar-tabs';
 
-  const months = [0, 1, 2].map(offset => {
+  const months = [0, 1].map(offset => {
     const d = new Date(today.getFullYear(), today.getMonth() + offset, 1);
     return { offset, label: MONTHS_SV[d.getMonth()] + ' ' + d.getFullYear() };
   });
@@ -314,54 +314,88 @@ function formatDateSv(date) {
     + MONTHS_SV[date.getMonth()].toLowerCase() + ' ' + date.getFullYear();
 }
 
-let modalGuestCount = 2;
+const TIMESLOT_SUPPORTED = ['lilla-ego', 'hantverket'];
+
+async function fetchModalTimeslots(restaurant, date, guests, container) {
+  if (!TIMESLOT_SUPPORTED.includes(restaurant.id)) return;
+
+  const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  container.innerHTML = '<div class="slots-loading">Hämtar tider…</div>';
+
+  try {
+    const res = await fetch(`${API_BASE}/timeslots/${restaurant.id}?date=${dateStr}&guests=${guests}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+
+    if (!data.slots || data.slots.length === 0) {
+      container.innerHTML = '<div class="no-slots">Inga lediga tider för detta datum.</div>';
+      return;
+    }
+
+    const openSlots = data.slots.filter(s => s.status === 'open');
+    if (openSlots.length === 0) {
+      container.innerHTML = '<div class="no-slots">Inga lediga tider — fullt bokat.</div>';
+      return;
+    }
+
+    container.innerHTML = openSlots.map(s =>
+      `<span class="time-slot open">${s.time}</span>`
+    ).join('');
+  } catch (err) {
+    console.warn(`[timeslots] ${restaurant.id}:`, err.message);
+    container.innerHTML = '<div class="no-slots">Kunde inte hämta tider.</div>';
+  }
+}
 
 function openModal(restaurant, date) {
-  modalGuestCount = 2;
   const modal = document.getElementById('modal');
   const content = document.getElementById('modal-content');
-  const slots = getTimeSlots(restaurant, date);
-
-  const slotsHtml = slots.map(s =>
-    `<div class="time-slot ${s.status}">${s.time}${s.status === 'limited' ? '<br><small>Sista</small>' : ''}</div>`
-  ).join('');
+  const isLive = !!liveAvailability[restaurant.id];
+  const hasTimeslots = TIMESLOT_SUPPORTED.includes(restaurant.id);
 
   const noteHtml = restaurant.note
     ? `<p class="modal-note">${restaurant.note}</p>`
     : '';
 
+  const dataNote = isLive
+    ? `<p class="modal-note">Tillgänglighet hämtad direkt från bokningssidan.</p>`
+    : `<p class="modal-note">Indikativ tillgänglighet — kontrollera alltid på bokningssidan.</p>`;
+
+  const guestPickerHtml = hasTimeslots ? `
+    <div class="modal-guest-picker">
+      <span class="guest-label">Antal gäster:</span>
+      ${[1,2,3,4,5,6].map(n => `<button class="guest-btn${n === 2 ? ' active' : ''}" data-guests="${n}">${n}</button>`).join('')}
+    </div>
+    <div class="time-slots-container"></div>
+  ` : '';
+
   content.innerHTML = `
     <div class="modal-date">${formatDateSv(date)}</div>
     <div class="modal-restaurant">${restaurant.name}</div>
-    <div class="guest-picker">
-      <span class="guest-label">Antal gäster</span>
-      <div class="guest-controls">
-        <button class="guest-btn" id="guest-dec">−</button>
-        <span class="guest-num" id="guest-count">2</span>
-        <button class="guest-btn" id="guest-inc">+</button>
-      </div>
-    </div>
-    <div class="time-slots">${slotsHtml}</div>
     <a class="modal-book-btn" href="${restaurant.bookingUrl}" target="_blank" rel="noopener noreferrer">
-      Gå till bokning
+      Se lediga tider &amp; boka
     </a>
+    ${guestPickerHtml}
     ${noteHtml}
+    ${dataNote}
   `;
 
-  document.getElementById('guest-dec').addEventListener('click', () => {
-    if (modalGuestCount > 1) {
-      modalGuestCount--;
-      document.getElementById('guest-count').textContent = modalGuestCount;
-    }
-  });
-  document.getElementById('guest-inc').addEventListener('click', () => {
-    if (modalGuestCount < 10) {
-      modalGuestCount++;
-      document.getElementById('guest-count').textContent = modalGuestCount;
-    }
-  });
-
   modal.classList.remove('hidden');
+
+  if (hasTimeslots) {
+    const slotsContainer = content.querySelector('.time-slots-container');
+    let currentGuests = 2;
+    fetchModalTimeslots(restaurant, date, currentGuests, slotsContainer);
+
+    content.querySelectorAll('.guest-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        content.querySelectorAll('.guest-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentGuests = parseInt(btn.dataset.guests);
+        fetchModalTimeslots(restaurant, date, currentGuests, slotsContainer);
+      });
+    });
+  }
 }
 
 function closeModal() {

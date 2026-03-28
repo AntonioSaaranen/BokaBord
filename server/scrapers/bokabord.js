@@ -11,177 +11,297 @@ const RESTAURANTS = {
     hash: 'f7f00569986df77ef5d7b4abe98b9bed',
     name: 'Hantverket',
   },
-  // Ekstedt och Oaxen Krog bokar via egna system (inte Bokabord).
-  // Lämnas som stubs — fronten faller tillbaka på simulerad data.
+  // Egna bokningssystem — returnerar tom availability, fronten faller tillbaka på simulerad data
   'ekstedt': null,
   'oaxen-krog': null,
 };
 
-/**
- * Scrape availability for a Bokabord restaurant.
- * Strategy: intercept XHR/fetch calls that Bokabord makes to its own API,
- * then walk through 3 months of calendar.
- */
+const MONTH_MAP = {
+  January: 1, February: 2, March: 3, April: 4, May: 5, June: 6,
+  July: 7, August: 8, September: 9, October: 10, November: 11, December: 12,
+  Januari: 1, Februari: 2, Mars: 3, Maj: 5, Juni: 6,
+  Juli: 7, Augusti: 8, Oktober: 10,
+};
+
 async function scrapeBokabord(restaurantId) {
   const config = RESTAURANTS[restaurantId];
   if (config === undefined) throw new Error(`Unknown restaurant: ${restaurantId}`);
-  // Null config = known restaurant but no Bokabord integration
-  if (config === null) return { restaurantId, name: restaurantId, scraped: new Date().toISOString(), availability: {} };
+  if (config === null) {
+    return { restaurantId, name: restaurantId, scraped: new Date().toISOString(), availability: {} };
+  }
 
   const url = `https://app.bokabord.se/reservation/?hash=${config.hash}&version=new&lang=sv`;
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({
-    userAgent:
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    viewport: { width: 1280, height: 800 },
   });
   const page = await context.newPage();
-
-  const availability = {}; // { 'YYYY-MM-DD': 'available' | 'scarce' | 'full' | 'closed' }
-  const apiResponses = [];
-
-  // Intercept API responses that contain date/availability data
-  page.on('response', async (response) => {
-    const url = response.url();
-    if (
-      (url.includes('bokabord') || url.includes('reservation')) &&
-      response.headers()['content-type']?.includes('application/json')
-    ) {
-      try {
-        const json = await response.json();
-        apiResponses.push({ url, json });
-      } catch {}
-    }
-  });
+  const availability = {};
 
   try {
     await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
     await page.waitForTimeout(2000);
 
-    // Try to walk through 3 months by clicking "next month" arrows
-    for (let month = 0; month < 3; month++) {
-      await page.waitForTimeout(1000);
+    // Step 1: Click meal type — prefer "Middag", fall back to first li
+    await page.evaluate(() => {
+      const lis = Array.from(document.querySelectorAll('li'));
+      const meal = lis.find(el => el.textContent.trim().toLowerCase().includes('middag')) || lis[0];
+      if (meal) meal.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    });
+    await page.waitForTimeout(2000);
 
-      // Extract dates from calendar — try common calendar selectors used by Bokabord
-      const dates = await page.evaluate(() => {
-        const results = [];
+    // Step 2: Click guest count 2 — fall back to first guest li
+    await page.evaluate(() => {
+      const lis = Array.from(document.querySelectorAll('li'));
+      const guest = lis.find(el => el.textContent.trim() === '2') || lis[1];
+      if (guest) guest.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+    });
 
-        // Bokabord typically renders days as <td> or <div> with data attributes or classes
-        // Try multiple selector strategies
-        const selectors = [
-          '[data-date]',
-          '[data-day]',
-          '.calendar-day',
-          '.day-cell',
-          'td.available',
-          'td.unavailable',
-          'td.closed',
-          '[class*="day"]',
-        ];
+    // Wait for ConsumerCalendar to render
+    await page.waitForSelector('.ConsumerCalendar', { timeout: 15000 }).catch(() => {
+      console.warn(`[${restaurantId}] ConsumerCalendar not found — calendar may not have loaded`);
+    });
+    await page.waitForTimeout(1500);
 
-        for (const sel of selectors) {
-          const els = document.querySelectorAll(sel);
-          if (els.length > 5) {
-            els.forEach((el) => {
-              const date =
-                el.dataset.date ||
-                el.dataset.day ||
-                el.getAttribute('data-date') ||
-                el.getAttribute('aria-label');
-              const classes = el.className || '';
-              let status = 'unknown';
-              if (classes.includes('unavailable') || classes.includes('full') || classes.includes('booked')) {
-                status = 'full';
-              } else if (classes.includes('available') || classes.includes('open') || classes.includes('free')) {
-                status = 'available';
-              } else if (classes.includes('limited') || classes.includes('scarce') || classes.includes('few')) {
-                status = 'scarce';
-              } else if (classes.includes('closed') || classes.includes('disabled')) {
-                status = 'closed';
-              }
-              if (date) results.push({ date, status, classes });
-            });
-            break;
+    // Scrape all visible months, navigate if we have fewer than 3
+    const scrapedMonths = new Set();
+
+    for (let pass = 0; pass < 3; pass++) {
+      const months = await page.evaluate((MONTHS) => {
+        const result = [];
+        // Each month has its own container with heading + day grid
+        const containers = document.querySelectorAll('.ConsumerCalendar-month');
+        containers.forEach(container => {
+          const heading = container.querySelector('.ConsumerCalendar-monthHeading');
+          const headingText = heading ? heading.textContent.trim() : '';
+          const match = headingText.match(/(\w+)\s+(\d{4})/);
+          if (!match) return;
+
+          const monthNum = MONTHS[match[1]];
+          const year = parseInt(match[2]);
+          if (!monthNum || isNaN(year)) return;
+
+          const days = [];
+          container.querySelectorAll('.ConsumerCalendar-day').forEach(el => {
+            const classes = el.className;
+            if (classes.includes('is-out-of-month')) return;
+
+            const textEl = el.querySelector('.ConsumerCalendar-dayText');
+            const dayNum = textEl ? parseInt(textEl.textContent.trim()) : NaN;
+            if (isNaN(dayNum) || dayNum < 1) return;
+
+            const dateStr = `${year}-${String(monthNum).padStart(2, '0')}-${String(dayNum).padStart(2, '0')}`;
+
+            let status;
+            if (classes.includes('is-disabled') || classes.includes('offDay')) {
+              // Stängt eller fullbokat
+              status = 'full';
+            } else if (classes.includes('activeDay')) {
+              // activeDay = dagens datum markerat i Angular — inte nödvändigtvis ledigt
+              status = 'full';
+            } else {
+              // Ingen statusklass = ledigt att boka
+              status = 'available';
+            }
+
+            days.push({ date: dateStr, status });
+          });
+
+          result.push({ headingText, monthNum, year, days });
+        });
+        return result;
+      }, MONTH_MAP);
+
+      let newMonthsFound = 0;
+      for (const { headingText, monthNum, year, days } of months) {
+        const key = `${year}-${monthNum}`;
+        if (scrapedMonths.has(key)) continue;
+        scrapedMonths.add(key);
+        newMonthsFound++;
+        console.log(`[${restaurantId}] ${headingText} — ${days.length} days`);
+        days.forEach(({ date, status }) => { availability[date] = status; });
+      }
+
+      if (scrapedMonths.size >= 3) break;
+
+      // Need more months — navigate forward
+      const navigated = await page.evaluate(() => {
+        const headingBtns = Array.from(document.querySelectorAll('.ConsumerCalendar-monthHeading button'));
+        const ngClickEls = Array.from(document.querySelectorAll('[ng-click*="next"], [ng-click*="Next"], [ng-click*="forward"]'));
+        const candidates = [...headingBtns, ...ngClickEls];
+
+        for (const el of candidates) {
+          const txt = el.textContent.trim();
+          const cls = (el.className || '').toString();
+          const ngClick = el.getAttribute('ng-click') || '';
+          if (txt.includes('>') || txt.includes('›') || txt.includes('→') ||
+              cls.includes('next') || ngClick.toLowerCase().includes('next') || ngClick.includes('forward')) {
+            el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            return true;
           }
         }
-        return results;
+        // Last resort: last button in heading area
+        if (headingBtns.length > 0) {
+          headingBtns[headingBtns.length - 1].dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+          return 'fallback';
+        }
+        return false;
       });
 
-      dates.forEach(({ date, status }) => {
-        if (date && date.match(/\d{4}-\d{2}-\d{2}/)) {
-          availability[date] = status;
-        }
-      });
-
-      // Click next month if not last iteration
-      if (month < 2) {
-        const nextBtn = await page.$(
-          'button[aria-label*="nästa"], button[aria-label*="next"], .next-month, [class*="next"], .fc-next-button, button:has-text("›"), button:has-text(">")'
-        );
-        if (nextBtn) {
-          await nextBtn.click();
-          await page.waitForTimeout(800);
-        }
+      if (!navigated) {
+        console.warn(`[${restaurantId}] Cannot navigate further (pass ${pass})`);
+        break;
       }
-    }
-
-    // Also parse any intercepted API responses for date data
-    for (const { json } of apiResponses) {
-      parseApiResponseForDates(json, availability);
+      await page.waitForTimeout(1500);
     }
 
   } finally {
     await browser.close();
   }
 
-  // If we got very little DOM data, fall back to API response parsing
-  if (Object.keys(availability).length < 10 && apiResponses.length > 0) {
-    console.log(`[${restaurantId}] DOM parsing yielded little data, using API responses`);
-    console.log(`[${restaurantId}] API endpoints hit:`, apiResponses.map((r) => r.url));
-  }
-
+  console.log(`[${restaurantId}] Scraped ${Object.keys(availability).length} dates`);
   return {
     restaurantId,
     name: config.name,
     scraped: new Date().toISOString(),
     availability,
-    rawApiEndpoints: apiResponses.map((r) => r.url),
   };
 }
 
-function parseApiResponseForDates(json, availability) {
-  if (!json || typeof json !== 'object') return;
+/**
+ * Scrape lediga tidsluckor för ett specifikt datum och antal gäster.
+ */
+async function scrapeTimeslots(restaurantId, dateStr, guests) {
+  const config = RESTAURANTS[restaurantId];
+  if (!config) throw new Error(`Unknown restaurant: ${restaurantId}`);
 
-  // Look for arrays of date objects in any property
-  const walk = (obj) => {
-    if (Array.isArray(obj)) {
-      obj.forEach((item) => {
-        if (item && typeof item === 'object') {
-          const dateVal =
-            item.date || item.day || item.Date || item.datum;
-          if (dateVal && String(dateVal).match(/\d{4}-\d{2}-\d{2}/)) {
-            const available =
-              item.available ??
-              item.is_available ??
-              item.open ??
-              item.free ??
-              item.slots;
-            let status = 'unknown';
-            if (available === true || available === 1 || (typeof available === 'number' && available > 0)) {
-              status = 'available';
-            } else if (available === false || available === 0) {
-              status = 'full';
-            }
-            const match = String(dateVal).match(/\d{4}-\d{2}-\d{2}/);
-            if (match) availability[match[0]] = status;
-          }
-          walk(item);
+  const [year, month, day] = dateStr.split('-').map(Number);
+
+  const url = `https://app.bokabord.se/reservation/?hash=${config.hash}&version=new&lang=sv`;
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({
+    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    viewport: { width: 1280, height: 800 },
+  });
+  const page = await context.newPage();
+
+  try {
+    await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
+    await page.waitForTimeout(2000);
+
+    // Steg 1: Middag
+    await page.evaluate(() => {
+      const li = Array.from(document.querySelectorAll('li')).find(el =>
+        el.textContent.trim().toLowerCase().includes('middag')
+      );
+      if (li) li.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    });
+    await page.waitForTimeout(2000);
+
+    // Steg 2: Antal gäster
+    await page.evaluate((g) => {
+      const li = Array.from(document.querySelectorAll('li')).find(el =>
+        el.textContent.trim() === String(g)
+      );
+      if (li) li.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+    }, guests);
+
+    await page.waitForSelector('.ConsumerCalendar', { timeout: 15000 }).catch(() => {});
+    await page.waitForTimeout(1500);
+
+    // Steg 3: Navigera till rätt månad om den inte syns
+    for (let pass = 0; pass < 6; pass++) {
+      const monthVisible = await page.evaluate(({ targetYear, targetMonth, MONTHS }) => {
+        const containers = document.querySelectorAll('.ConsumerCalendar-month');
+        for (const container of containers) {
+          const heading = container.querySelector('.ConsumerCalendar-monthHeading');
+          if (!heading) continue;
+          const match = heading.textContent.trim().match(/(\w+)\s+(\d{4})/);
+          if (!match) continue;
+          if (MONTHS[match[1]] === targetMonth && parseInt(match[2]) === targetYear) return true;
         }
+        return false;
+      }, { targetYear: year, targetMonth: month, MONTHS: MONTH_MAP });
+
+      if (monthVisible) break;
+
+      // Navigera framåt
+      const navigated = await page.evaluate(() => {
+        const headingBtns = Array.from(document.querySelectorAll('.ConsumerCalendar-monthHeading button'));
+        const ngClickEls = Array.from(document.querySelectorAll('[ng-click*="next"], [ng-click*="Next"], [ng-click*="forward"]'));
+        const candidates = [...headingBtns, ...ngClickEls];
+        for (const el of candidates) {
+          const txt = el.textContent.trim();
+          const cls = (el.className || '').toString();
+          const ngClick = el.getAttribute('ng-click') || '';
+          if (txt.includes('>') || txt.includes('›') || txt.includes('→') ||
+              cls.includes('next') || ngClick.toLowerCase().includes('next') || ngClick.includes('forward')) {
+            el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            return true;
+          }
+        }
+        if (headingBtns.length > 0) {
+          headingBtns[headingBtns.length - 1].dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+          return true;
+        }
+        return false;
       });
-    } else if (obj && typeof obj === 'object') {
-      Object.values(obj).forEach(walk);
+
+      if (!navigated) break;
+      await page.waitForTimeout(1000);
     }
-  };
-  walk(json);
+
+    // Steg 4: Klicka på rätt datum
+    const clicked = await page.evaluate(({ targetYear, targetMonth, targetDay, MONTHS }) => {
+      const containers = document.querySelectorAll('.ConsumerCalendar-month');
+      for (const container of containers) {
+        const heading = container.querySelector('.ConsumerCalendar-monthHeading');
+        if (!heading) continue;
+        const match = heading.textContent.trim().match(/(\w+)\s+(\d{4})/);
+        if (!match) continue;
+        if (MONTHS[match[1]] !== targetMonth || parseInt(match[2]) !== targetYear) continue;
+
+        for (const dayEl of container.querySelectorAll('.ConsumerCalendar-day')) {
+          if (dayEl.className.includes('is-out-of-month')) continue;
+          if (dayEl.className.includes('is-disabled')) continue;
+          const txt = dayEl.querySelector('.ConsumerCalendar-dayText');
+          if (txt && parseInt(txt.textContent.trim()) === targetDay) {
+            dayEl.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+            return true;
+          }
+        }
+      }
+      return false;
+    }, { targetYear: year, targetMonth: month, targetDay: day, MONTHS: MONTH_MAP });
+
+    if (!clicked) {
+      console.warn(`[${restaurantId}] Datum ${dateStr} ej klickbart`);
+      return { restaurantId, date: dateStr, guests, slots: [] };
+    }
+
+    // Vänta på tidsluckor
+    await page.waitForTimeout(3000);
+
+    // Extrahera tidsluckor från TimesList-item li-element
+    const slots = await page.evaluate(() => {
+      const result = [];
+      document.querySelectorAll('li.TimesList-item').forEach(el => {
+        const timeEl = el.querySelector('.TimesList-itemTime');
+        const time = timeEl ? timeEl.textContent.trim() : '';
+        if (!time.match(/^\d{1,2}:\d{2}$/)) return;
+        const isBooked = el.className.includes('not-available');
+        result.push({ time, status: isBooked ? 'booked' : 'open' });
+      });
+      return result;
+    });
+
+    console.log(`[${restaurantId}] ${dateStr} ${guests}p — ${slots.length} tidsluckor`);
+    return { restaurantId, date: dateStr, guests, slots };
+
+  } finally {
+    await browser.close();
+  }
 }
 
-module.exports = { scrapeBokabord };
+module.exports = { scrapeBokabord, scrapeTimeslots };

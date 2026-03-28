@@ -463,6 +463,76 @@ main {
   font-style: italic;
 }
 
+/* ─── Modal guest picker + time slots ───── */
+.modal-guest-picker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 20px;
+  flex-wrap: wrap;
+}
+
+.guest-label {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-right: 2px;
+}
+
+.guest-btn {
+  background: var(--surface3);
+  border: 1px solid var(--border-soft);
+  color: var(--text-dim);
+  border-radius: var(--radius-sm);
+  padding: 4px 11px;
+  font-size: 0.82rem;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.guest-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+.guest-btn.active {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.time-slots-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+  min-height: 36px;
+}
+
+.time-slot {
+  padding: 5px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 0.82rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+.time-slot.open {
+  background: rgba(82,183,136,0.12);
+  border: 1px solid rgba(82,183,136,0.35);
+  color: var(--available);
+}
+
+.slots-loading {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  font-style: italic;
+  padding: 6px 0;
+}
+
+.no-slots {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  padding: 6px 0;
+}
+
 /* ─── Loading spinner ────────────────────── */
 @keyframes spin {
   to { transform: rotate(360deg); }
