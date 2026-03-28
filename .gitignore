@@ -1,1 +1,14 @@
+# Dependencies
+node_modules/
 server/node_modules/
+
+# Debug files
+server/debug-*.js
+server/debug-*.png
+server/debug-*.txt
+
+# macOS
+.DS_Store
+
+# Environment
+.env
