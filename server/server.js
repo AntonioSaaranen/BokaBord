@@ -54,6 +54,7 @@ app.get('/api/availability/:restaurant', async (req, res) => {
     'frantzen': () => scrapeFrantzen(),
     'ekstedt': () => scrapeBokabord('ekstedt'),
     'oaxen-krog': () => scrapeBokabord('oaxen-krog'),
+    'ag': () => scrapeBokabord('ag'),
   };
 
   if (!scrapers[restaurant]) {
@@ -72,12 +73,13 @@ app.get('/api/availability/:restaurant', async (req, res) => {
 // GET /api/availability — all restaurants in parallel
 app.get('/api/availability', async (req, res) => {
   try {
-    const [lillaEgo, hantverket, frantzen, ekstedt, oaxenKrog] = await Promise.allSettled([
+    const [lillaEgo, hantverket, frantzen, ekstedt, oaxenKrog, ag] = await Promise.allSettled([
       singleFlight('lilla-ego', () => scrapeBokabord('lilla-ego')),
       singleFlight('hantverket', () => scrapeBokabord('hantverket')),
       singleFlight('frantzen', () => scrapeFrantzen()),
       singleFlight('ekstedt', () => scrapeBokabord('ekstedt')),
       singleFlight('oaxen-krog', () => scrapeBokabord('oaxen-krog')),
+      singleFlight('ag', () => scrapeBokabord('ag')),
     ]);
 
     res.json({
@@ -86,6 +88,7 @@ app.get('/api/availability', async (req, res) => {
       'frantzen': frantzen.status === 'fulfilled' ? frantzen.value : { error: frantzen.reason?.message },
       'ekstedt': ekstedt.status === 'fulfilled' ? ekstedt.value : { error: ekstedt.reason?.message },
       'oaxen-krog': oaxenKrog.status === 'fulfilled' ? oaxenKrog.value : { error: oaxenKrog.reason?.message },
+      'ag': ag.status === 'fulfilled' ? ag.value : { error: ag.reason?.message },
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -102,7 +105,7 @@ app.get('/api/timeslots/:restaurant', async (req, res) => {
   }
 
   const guestsNum = Math.max(1, Math.min(10, parseInt(guests) || 2));
-  const supported = ['lilla-ego', 'hantverket'];
+  const supported = ['lilla-ego', 'hantverket', 'ag'];
 
   if (!supported.includes(restaurant)) {
     return res.status(404).json({ error: 'Tidsluckor ej tillgängliga för denna restaurang' });

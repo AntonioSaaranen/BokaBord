@@ -11,6 +11,11 @@ const RESTAURANTS = {
     hash: 'f7f00569986df77ef5d7b4abe98b9bed',
     name: 'Hantverket',
   },
+  'ag': {
+    hash: '29f087bafdf8723d0918d6ed5bdf7b06',
+    name: 'AG',
+    domain: 'beta.waiteraid.com',
+  },
   // Egna bokningssystem — returnerar tom availability, fronten faller tillbaka på simulerad data
   'ekstedt': null,
   'oaxen-krog': null,
@@ -30,7 +35,8 @@ async function scrapeBokabord(restaurantId) {
     return { restaurantId, name: restaurantId, scraped: new Date().toISOString(), availability: {} };
   }
 
-  const url = `https://app.bokabord.se/reservation/?hash=${config.hash}&version=new&lang=sv`;
+  const domain = config.domain || 'app.bokabord.se';
+  const url = `https://${domain}/reservation/?hash=${config.hash}&version=new&lang=sv`;
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({
     userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -178,7 +184,8 @@ async function scrapeTimeslots(restaurantId, dateStr, guests) {
 
   const [year, month, day] = dateStr.split('-').map(Number);
 
-  const url = `https://app.bokabord.se/reservation/?hash=${config.hash}&version=new&lang=sv`;
+  const domain = config.domain || 'app.bokabord.se';
+  const url = `https://${domain}/reservation/?hash=${config.hash}&version=new&lang=sv`;
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({
     userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',

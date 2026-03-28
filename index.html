@@ -10,13 +10,44 @@
   <header>
     <div class="header-inner">
       <h1>Boka Bord</h1>
-      <p class="tagline">Stockholms finaste restauranger — tre månader framöver</p>
+      <p class="tagline">Stockholms finaste restauranger — två månader framöver</p>
     </div>
   </header>
 
-  <main>
-    <div id="restaurants"></div>
-  </main>
+  <div class="app-layout">
+    <aside class="sidebar" id="sidebar"></aside>
+
+    <div class="panel" id="panel">
+      <div class="panel-header">
+        <div class="panel-meta">
+          <h2 class="panel-name"></h2>
+          <div class="panel-cuisine"></div>
+          <div class="panel-desc"></div>
+          <p class="panel-note" hidden></p>
+        </div>
+        <div class="panel-actions">
+          <a class="book-btn panel-book-btn" href="#" target="_blank" rel="noopener noreferrer">Boka bord</a>
+          <span class="source-badge" id="panel-badge" data-source="loading">Hämtar…</span>
+        </div>
+      </div>
+
+      <div class="panel-guest-row">
+        <span class="guest-row-label">Antal gäster</span>
+        <div class="panel-guest-btns" id="guest-btns"></div>
+      </div>
+
+      <div class="panel-calendar-area">
+        <div class="calendar-tabs" id="cal-tabs"></div>
+        <div class="calendar-wrapper" id="cal-wrapper"></div>
+        <div class="legend">
+          <div class="legend-item"><div class="legend-dot" style="background:var(--available)"></div> Lediga bord</div>
+          <div class="legend-item"><div class="legend-dot" style="background:var(--scarce)"></div> Sista platser</div>
+          <div class="legend-item"><div class="legend-dot" style="background:var(--full)"></div> Fullbokat</div>
+          <div class="legend-item"><div class="legend-dot" style="background:var(--closed)"></div> Stängt</div>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <footer>
     <p>Tillgänglighetsdata är indikativ. Slutgiltig bokning sker hos respektive restaurang.</p>
