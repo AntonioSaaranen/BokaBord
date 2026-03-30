@@ -12,3 +12,6 @@ server/debug-*.txt
 
 # Environment
 .env
+
+# Runtime data
+server/watchlist.json

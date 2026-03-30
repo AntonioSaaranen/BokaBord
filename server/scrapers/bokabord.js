@@ -16,6 +16,10 @@ const RESTAURANTS = {
     name: 'AG',
     domain: 'beta.waiteraid.com',
   },
+  'frantzen': {
+    hash: '77779be66a85c01c2efe78905bbf67e9',
+    name: 'Frantzén',
+  },
   // Egna bokningssystem — returnerar tom availability, fronten faller tillbaka på simulerad data
   'ekstedt': null,
   'oaxen-krog': null,
@@ -197,12 +201,11 @@ async function scrapeTimeslots(restaurantId, dateStr, guests) {
     await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
     await page.waitForTimeout(2000);
 
-    // Steg 1: Middag
+    // Steg 1: Klicka måltidstyp — föredrar "Middag", faller annars tillbaka på första li
     await page.evaluate(() => {
-      const li = Array.from(document.querySelectorAll('li')).find(el =>
-        el.textContent.trim().toLowerCase().includes('middag')
-      );
-      if (li) li.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      const lis = Array.from(document.querySelectorAll('li'));
+      const meal = lis.find(el => el.textContent.trim().toLowerCase().includes('middag')) || lis[0];
+      if (meal) meal.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
     });
     await page.waitForTimeout(2000);
 

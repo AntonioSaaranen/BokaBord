@@ -61,7 +61,7 @@ const RESTAURANTS = [
     name: 'Frantzén',
     cuisine: 'Fine Dining · 3 Michelin-stjärnor',
     desc: 'Ett av Nordens mest hyllade matupplevelserna med en unik omakase-upplevelse i hjärtat av Stockholm.',
-    bookingUrl: 'https://www.restaurantfrantzen.com/',
+    bookingUrl: 'https://app.bokabord.se/reservation/?hash=77779be66a85c01c2efe78905bbf67e9&version=new&lang=sv',
     closedDays: [0, 1],
     popularity: 0.92,
     note: 'Bord släpps den 1:a varje månad kl 10:00 CET',
@@ -75,7 +75,7 @@ const MONTHS_SV = [
   'Juli', 'Augusti', 'September', 'Oktober', 'November', 'December',
 ];
 const DAYS_SV = ['söndag', 'måndag', 'tisdag', 'onsdag', 'torsdag', 'fredag', 'lördag'];
-const TIMESLOT_SUPPORTED = ['lilla-ego', 'hantverket', 'ag'];
+const TIMESLOT_SUPPORTED = ['lilla-ego', 'hantverket', 'ag', 'frantzen'];
 
 // ── Availability helpers ─────────────────────────────────────────────
 function seededRand(seed) {
@@ -328,6 +328,8 @@ function openModal(restaurant, date) {
     <div class="time-slots-container"></div>
   ` : '';
 
+  const watchlistHtml = TIMESLOT_SUPPORTED.includes(restaurant.id) ? watchlistFormHtml(restaurant, date) : '';
+
   content.innerHTML = `
     <div class="modal-date">${formatDateSv(date)}</div>
     <div class="modal-restaurant">${restaurant.name}</div>
@@ -337,6 +339,7 @@ function openModal(restaurant, date) {
     ${guestPickerHtml}
     ${noteHtml}
     ${dataNote}
+    ${watchlistHtml}
   `;
 
   modal.classList.remove('hidden');
@@ -355,6 +358,10 @@ function openModal(restaurant, date) {
       });
     });
   }
+
+  if (TIMESLOT_SUPPORTED.includes(restaurant.id)) {
+    initWatchlistSection(restaurant, date, currentGuests);
+  }
 }
 
 function closeModal() {
@@ -364,6 +371,126 @@ function closeModal() {
 document.getElementById('modal-close').addEventListener('click', closeModal);
 document.querySelector('.modal-backdrop').addEventListener('click', closeModal);
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
+// ── Watchlist ─────────────────────────────────────────────────────────
+
+function watchlistFormHtml(restaurant, date) {
+  const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  return `
+    <div class="watchlist-section">
+      <button class="watchlist-toggle-btn" data-restaurant-id="${restaurant.id}" data-restaurant-name="${restaurant.name}" data-date="${dateStr}">
+        + Bevaka detta datum
+      </button>
+      <form class="watchlist-form hidden" id="watchlist-form" novalidate>
+        <input type="hidden" name="restaurantId" value="${restaurant.id}">
+        <input type="hidden" name="restaurantName" value="${restaurant.name}">
+        <input type="hidden" name="date" value="${dateStr}">
+        <div class="watchlist-fields">
+          <input class="wl-input" type="text" name="name" placeholder="Ditt namn" required>
+          <input class="wl-input" type="email" name="email" placeholder="E-post" required>
+          <input class="wl-input" type="tel" name="phone" placeholder="Telefon (valfritt)">
+          <select class="wl-input" name="timePreference">
+            <option value="">Valfri tid</option>
+            <option value="lunch">Lunch (–16:00)</option>
+            <option value="dinner">Middag (17:00–)</option>
+          </select>
+        </div>
+        <div class="watchlist-form-actions">
+          <button type="submit" class="wl-submit-btn">Bevaka</button>
+          <button type="button" class="wl-cancel-btn">Avbryt</button>
+        </div>
+        <p class="watchlist-confirm hidden" id="watchlist-confirm">Bevakning tillagd! Vi meddelar dig när ett bord blir ledigt.</p>
+      </form>
+    </div>
+  `;
+}
+
+function initWatchlistSection(restaurant, date, guests) {
+  const content = document.getElementById('modal-content');
+  const section = content.querySelector('.watchlist-section');
+  if (!section) return;
+
+  const toggleBtn = section.querySelector('.watchlist-toggle-btn');
+  const form = section.querySelector('.watchlist-form');
+  const cancelBtn = section.querySelector('.wl-cancel-btn');
+  const confirm = section.querySelector('#watchlist-confirm');
+
+  toggleBtn.addEventListener('click', () => {
+    form.classList.toggle('hidden');
+    toggleBtn.classList.toggle('hidden');
+  });
+
+  cancelBtn.addEventListener('click', () => {
+    form.classList.add('hidden');
+    toggleBtn.classList.remove('hidden');
+  });
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(form);
+    const payload = {
+      restaurantId: fd.get('restaurantId'),
+      restaurantName: fd.get('restaurantName'),
+      date: fd.get('date'),
+      guests,
+      timePreference: fd.get('timePreference') || null,
+      name: fd.get('name'),
+      email: fd.get('email'),
+      phone: fd.get('phone') || null,
+    };
+    try {
+      const res = await fetch(`${API_BASE}/watchlist`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      form.querySelectorAll('input, select').forEach(el => { if (el.type !== 'hidden') el.value = ''; });
+      confirm.classList.remove('hidden');
+      setTimeout(() => {
+        form.classList.add('hidden');
+        toggleBtn.classList.remove('hidden');
+        confirm.classList.add('hidden');
+      }, 3000);
+    } catch (err) {
+      console.warn('[watchlist] submit error:', err.message);
+    }
+  });
+}
+
+// ── Alert polling & toasts ────────────────────────────────────────────
+
+function showToast(alert) {
+  const container = document.getElementById('toast-container');
+  const toast = document.createElement('div');
+  toast.className = 'toast';
+  const times = alert.slots.map(s => s.time).join(', ');
+  toast.innerHTML = `
+    <div class="toast-header">
+      <strong>${alert.restaurantName}</strong>
+      <button class="toast-close">✕</button>
+    </div>
+    <div class="toast-body">
+      <p>${alert.date} — lediga tider: <strong>${times}</strong></p>
+      <p class="toast-user">${alert.user.name} · ${alert.user.email}${alert.user.phone ? ' · ' + alert.user.phone : ''}</p>
+      <a class="toast-book-btn" href="${alert.bookingUrl}" target="_blank" rel="noopener noreferrer">Boka nu →</a>
+    </div>
+  `;
+  toast.querySelector('.toast-close').addEventListener('click', () => toast.remove());
+  container.appendChild(toast);
+  setTimeout(() => { if (toast.isConnected) toast.remove(); }, 60000);
+}
+
+async function pollAlerts() {
+  try {
+    const res = await fetch(`${API_BASE}/watchlist/alerts`);
+    if (!res.ok) return;
+    const { alerts } = await res.json();
+    alerts.forEach(showToast);
+  } catch {}
+}
+
+setInterval(pollAlerts, 60 * 1000);
 
 // ── Boot ──────────────────────────────────────────────────────────────
 renderSidebar();
