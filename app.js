@@ -378,9 +378,7 @@ function watchlistFormHtml(restaurant, date) {
   const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
   return `
     <div class="watchlist-section">
-      <button class="watchlist-toggle-btn" data-restaurant-id="${restaurant.id}" data-restaurant-name="${restaurant.name}" data-date="${dateStr}">
-        + Bevaka detta datum
-      </button>
+      <button class="watchlist-toggle-btn">+ Bevaka detta datum</button>
       <form class="watchlist-form hidden" id="watchlist-form" novalidate>
         <input type="hidden" name="restaurantId" value="${restaurant.id}">
         <input type="hidden" name="restaurantName" value="${restaurant.name}">
@@ -389,11 +387,12 @@ function watchlistFormHtml(restaurant, date) {
           <input class="wl-input" type="text" name="name" placeholder="Ditt namn" required>
           <input class="wl-input" type="email" name="email" placeholder="E-post" required>
           <input class="wl-input" type="tel" name="phone" placeholder="Telefon (valfritt)">
-          <select class="wl-input" name="timePreference">
-            <option value="">Valfri tid</option>
-            <option value="lunch">Lunch (–16:00)</option>
-            <option value="dinner">Middag (17:00–)</option>
-          </select>
+        </div>
+        <div class="wl-times-section">
+          <div class="wl-times-label">Bevaka tider (lämna tomt för alla):</div>
+          <div class="wl-times-grid" id="wl-times-grid">
+            <span class="wl-times-loading">Hämtar tider…</span>
+          </div>
         </div>
         <div class="watchlist-form-actions">
           <button type="submit" class="wl-submit-btn">Bevaka</button>
@@ -405,6 +404,28 @@ function watchlistFormHtml(restaurant, date) {
   `;
 }
 
+async function loadWatchlistTimes(restaurant, date, guests, grid) {
+  const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  try {
+    const res = await fetch(`${API_BASE}/timeslots/${restaurant.id}?date=${dateStr}&guests=${guests}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const slots = data.slots || [];
+    if (slots.length === 0) {
+      grid.innerHTML = '<span class="wl-times-loading">Inga tider tillgängliga.</span>';
+      return;
+    }
+    grid.innerHTML = slots.map(s => `
+      <label class="wl-time-label ${s.status}">
+        <input type="checkbox" name="preferredTimes" value="${s.time}">
+        ${s.time}
+      </label>
+    `).join('');
+  } catch {
+    grid.innerHTML = '<span class="wl-times-loading">Kunde inte hämta tider.</span>';
+  }
+}
+
 function initWatchlistSection(restaurant, date, guests) {
   const content = document.getElementById('modal-content');
   const section = content.querySelector('.watchlist-section');
@@ -414,10 +435,16 @@ function initWatchlistSection(restaurant, date, guests) {
   const form = section.querySelector('.watchlist-form');
   const cancelBtn = section.querySelector('.wl-cancel-btn');
   const confirm = section.querySelector('#watchlist-confirm');
+  const timesGrid = section.querySelector('#wl-times-grid');
+  let timesLoaded = false;
 
   toggleBtn.addEventListener('click', () => {
-    form.classList.toggle('hidden');
-    toggleBtn.classList.toggle('hidden');
+    form.classList.remove('hidden');
+    toggleBtn.classList.add('hidden');
+    if (!timesLoaded) {
+      timesLoaded = true;
+      loadWatchlistTimes(restaurant, date, guests, timesGrid);
+    }
   });
 
   cancelBtn.addEventListener('click', () => {
@@ -428,12 +455,13 @@ function initWatchlistSection(restaurant, date, guests) {
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(form);
+    const preferredTimes = fd.getAll('preferredTimes');
     const payload = {
       restaurantId: fd.get('restaurantId'),
       restaurantName: fd.get('restaurantName'),
       date: fd.get('date'),
       guests,
-      timePreference: fd.get('timePreference') || null,
+      preferredTimes: preferredTimes.length > 0 ? preferredTimes : null,
       name: fd.get('name'),
       email: fd.get('email'),
       phone: fd.get('phone') || null,
@@ -445,7 +473,8 @@ function initWatchlistSection(restaurant, date, guests) {
         body: JSON.stringify(payload),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      form.querySelectorAll('input, select').forEach(el => { if (el.type !== 'hidden') el.value = ''; });
+      form.querySelectorAll('input[type="text"], input[type="email"], input[type="tel"]').forEach(el => { el.value = ''; });
+      form.querySelectorAll('input[type="checkbox"]').forEach(el => { el.checked = false; });
       confirm.classList.remove('hidden');
       setTimeout(() => {
         form.classList.add('hidden');

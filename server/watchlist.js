@@ -56,10 +56,8 @@ async function checkEntry(entry) {
     const result = await scrapeTimeslots(entry.restaurantId, entry.date, entry.guests);
     let open = result.slots.filter(s => s.status === 'open');
 
-    if (entry.timePreference === 'lunch') {
-      open = open.filter(s => parseInt(s.time) < 16);
-    } else if (entry.timePreference === 'dinner') {
-      open = open.filter(s => parseInt(s.time) >= 17);
+    if (entry.preferredTimes && entry.preferredTimes.length > 0) {
+      open = open.filter(s => entry.preferredTimes.includes(s.time));
     }
 
     if (open.length > 0) {
