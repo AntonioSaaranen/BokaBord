@@ -314,4 +314,166 @@ async function scrapeTimeslots(restaurantId, dateStr, guests) {
   }
 }
 
-module.exports = { scrapeBokabord, scrapeTimeslots };
+/**
+ * Navigerar till restaurangens bokningssida, väljer datum/tid och fyller i
+ * bokningsformuläret med användarens uppgifter. Returnerar { success, reason }.
+ * user: { firstName, lastName, email, phone }
+ */
+async function autoBook(restaurantId, dateStr, guests, timeStr, user) {
+  const config = RESTAURANTS[restaurantId];
+  if (!config) throw new Error(`Unknown restaurant: ${restaurantId}`);
+
+  const [year, month, day] = dateStr.split('-').map(Number);
+  const domain = config.domain || 'app.bokabord.se';
+  const url = `https://${domain}/reservation/?hash=${config.hash}&version=new&lang=sv`;
+
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({
+    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    viewport: { width: 1280, height: 800 },
+  });
+  const page = await context.newPage();
+
+  try {
+    await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
+    await page.waitForTimeout(2000);
+
+    // Steg 1: Måltidstyp
+    await page.evaluate(() => {
+      const lis = Array.from(document.querySelectorAll('li'));
+      const meal = lis.find(el => el.textContent.trim().toLowerCase().includes('middag')) || lis[0];
+      if (meal) meal.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    });
+    await page.waitForTimeout(2000);
+
+    // Steg 2: Antal gäster
+    await page.evaluate((g) => {
+      const li = Array.from(document.querySelectorAll('li')).find(el => el.textContent.trim() === String(g));
+      if (li) li.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+    }, guests);
+
+    await page.waitForSelector('.ConsumerCalendar', { timeout: 15000 }).catch(() => {});
+    await page.waitForTimeout(1500);
+
+    // Steg 3: Navigera till rätt månad
+    for (let pass = 0; pass < 6; pass++) {
+      const monthVisible = await page.evaluate(({ targetYear, targetMonth, MONTHS }) => {
+        for (const container of document.querySelectorAll('.ConsumerCalendar-month')) {
+          const heading = container.querySelector('.ConsumerCalendar-monthHeading');
+          if (!heading) continue;
+          const match = heading.textContent.trim().match(/(\w+)\s+(\d{4})/);
+          if (!match) continue;
+          if (MONTHS[match[1]] === targetMonth && parseInt(match[2]) === targetYear) return true;
+        }
+        return false;
+      }, { targetYear: year, targetMonth: month, MONTHS: MONTH_MAP });
+
+      if (monthVisible) break;
+
+      const navigated = await page.evaluate(() => {
+        const headingBtns = Array.from(document.querySelectorAll('.ConsumerCalendar-monthHeading button'));
+        const ngClickEls = Array.from(document.querySelectorAll('[ng-click*="next"], [ng-click*="Next"], [ng-click*="forward"]'));
+        for (const el of [...headingBtns, ...ngClickEls]) {
+          const txt = el.textContent.trim();
+          const cls = (el.className || '').toString();
+          const ngClick = el.getAttribute('ng-click') || '';
+          if (txt.includes('>') || txt.includes('›') || txt.includes('→') ||
+              cls.includes('next') || ngClick.toLowerCase().includes('next') || ngClick.includes('forward')) {
+            el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+            return true;
+          }
+        }
+        if (headingBtns.length > 0) {
+          headingBtns[headingBtns.length - 1].dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+          return true;
+        }
+        return false;
+      });
+      if (!navigated) break;
+      await page.waitForTimeout(1000);
+    }
+
+    // Steg 4: Klicka rätt datum
+    const clicked = await page.evaluate(({ targetYear, targetMonth, targetDay, MONTHS }) => {
+      for (const container of document.querySelectorAll('.ConsumerCalendar-month')) {
+        const heading = container.querySelector('.ConsumerCalendar-monthHeading');
+        if (!heading) continue;
+        const match = heading.textContent.trim().match(/(\w+)\s+(\d{4})/);
+        if (!match) continue;
+        if (MONTHS[match[1]] !== targetMonth || parseInt(match[2]) !== targetYear) continue;
+        for (const dayEl of container.querySelectorAll('.ConsumerCalendar-day')) {
+          if (dayEl.className.includes('is-out-of-month') || dayEl.className.includes('is-disabled')) continue;
+          const txt = dayEl.querySelector('.ConsumerCalendar-dayText');
+          if (txt && parseInt(txt.textContent.trim()) === targetDay) {
+            dayEl.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+            return true;
+          }
+        }
+      }
+      return false;
+    }, { targetYear: year, targetMonth: month, targetDay: day, MONTHS: MONTH_MAP });
+
+    if (!clicked) {
+      console.warn(`[autoBook] ${restaurantId} datum ${dateStr} ej klickbart`);
+      return { success: false, reason: 'date_unavailable' };
+    }
+
+    await page.waitForTimeout(3000);
+
+    // Steg 5: Hitta och klicka rätt tidslucka
+    const slotLi = page.locator('li.TimesList-item:not(.not-available)').filter({
+      has: page.locator(`.TimesList-itemTime`).filter({ hasText: timeStr }),
+    });
+    if (await slotLi.count() === 0) {
+      console.warn(`[autoBook] ${restaurantId} tid ${timeStr} ej tillgänglig`);
+      return { success: false, reason: 'time_unavailable' };
+    }
+    await slotLi.first().click({ timeout: 5000 });
+    await page.waitForTimeout(2000);
+
+    // Steg 6: Klicka den inre "Boka"-knappen (a.book som triggar setTime)
+    const bookBtn = slotLi.first().locator('a.book').first();
+    if (await bookBtn.count() === 0) {
+      console.warn(`[autoBook] ${restaurantId} hittade ingen intern bokningsknapp`);
+      return { success: false, reason: 'no_book_button' };
+    }
+    await bookBtn.click({ timeout: 5000 });
+    await page.waitForTimeout(3000);
+
+    // Steg 7: Fyll i formuläret
+    await page.fill('input[name="firstname"]', user.firstName);
+    await page.fill('input[name="lastname"]', user.lastName);
+    await page.fill('input[ng-model="booking.email"]', user.email);
+    if (user.phone) {
+      await page.fill('input[ng-model="booking.phone"]', user.phone).catch(() => {});
+    }
+    await page.waitForTimeout(500);
+
+    // Steg 8: Acceptera villkor
+    await page.locator('div[ng-click*="terms.restaurant"]').click().catch(() => {});
+    await page.locator('div[ng-click*="terms.bokabord"]').click().catch(() => {});
+    await page.waitForTimeout(500);
+
+    // Steg 9: Skicka
+    await page.locator('button[ng-click="next()"]').click({ timeout: 5000 });
+    await page.waitForTimeout(6000);
+
+    // Steg 10: Bekräftelsekontroll
+    const success = await page.evaluate(() => {
+      const txt = (document.body.innerText || '').toLowerCase();
+      // Formulärfälten borta = troligen lyckades; eller explicit bekräftelsetext
+      const formGone = document.querySelectorAll('input[name="firstname"]').length === 0;
+      const hasConfirmText = txt.includes('tack') || txt.includes('bekräft') ||
+                             txt.includes('confirmation') || txt.includes('thank');
+      return formGone || hasConfirmText;
+    });
+
+    console.log(`[autoBook] ${restaurantId} ${dateStr} ${timeStr} — ${success ? 'LYCKADES' : 'MISSLYCKADES'}`);
+    return { success, reason: success ? 'booked' : 'form_error' };
+
+  } finally {
+    await browser.close();
+  }
+}
+
+module.exports = { scrapeBokabord, scrapeTimeslots, autoBook };

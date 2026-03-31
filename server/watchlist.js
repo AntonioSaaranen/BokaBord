@@ -2,7 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { scrapeTimeslots } = require('./scrapers/bokabord');
+const { scrapeTimeslots, autoBook } = require('./scrapers/bokabord');
 
 const FILE = path.join(__dirname, 'watchlist.json');
 const POLL_MS = 5 * 60 * 1000;
@@ -62,7 +62,8 @@ async function checkEntry(entry) {
 
     if (open.length > 0) {
       console.log(`[watchlist] HITTAT! ${entry.restaurantId} ${entry.date} — ${open.map(s => s.time).join(', ')}`);
-      pendingAlerts.push({
+
+      const alertBase = {
         id: Date.now().toString(),
         entryId: entry.id,
         restaurantId: entry.restaurantId,
@@ -70,12 +71,44 @@ async function checkEntry(entry) {
         date: entry.date,
         slots: open,
         guests: entry.guests,
-        user: { name: entry.name, email: entry.email, phone: entry.phone },
+        user: { firstName: entry.firstName, lastName: entry.lastName, email: entry.email, phone: entry.phone },
         bookingUrl: BOOKING_URLS[entry.restaurantId] || '#',
         foundAt: new Date().toISOString(),
-      });
-      entry.status = 'found';
-      entry.foundAt = new Date().toISOString();
+      };
+
+      if (entry.autoBook && entry.firstName && entry.lastName && entry.email) {
+        // Försök boka automatiskt den första lediga tid
+        const targetSlot = open[0];
+        console.log(`[watchlist] Försöker autoboka ${entry.restaurantId} ${entry.date} ${targetSlot.time}...`);
+        try {
+          const result = await autoBook(
+            entry.restaurantId, entry.date, entry.guests, targetSlot.time,
+            { firstName: entry.firstName, lastName: entry.lastName, email: entry.email, phone: entry.phone }
+          );
+          if (result.success) {
+            entry.status = 'booked';
+            entry.bookedAt = new Date().toISOString();
+            entry.bookedTime = targetSlot.time;
+            pendingAlerts.push({ ...alertBase, autoBooked: true, bookedTime: targetSlot.time });
+            console.log(`[watchlist] Autobokning lyckades! ${entry.restaurantId} ${entry.date} ${targetSlot.time}`);
+          } else {
+            // Autobokning misslyckades — meddela ändå
+            entry.status = 'found';
+            entry.foundAt = new Date().toISOString();
+            pendingAlerts.push({ ...alertBase, autoBooked: false, autoBookFailed: true });
+            console.warn(`[watchlist] Autobokning misslyckades (${result.reason}), skickar manuell varning`);
+          }
+        } catch (bookErr) {
+          entry.status = 'found';
+          entry.foundAt = new Date().toISOString();
+          pendingAlerts.push({ ...alertBase, autoBooked: false, autoBookFailed: true });
+          console.error(`[watchlist] Autobokning fel:`, bookErr.message);
+        }
+      } else {
+        pendingAlerts.push({ ...alertBase, autoBooked: false });
+        entry.status = 'found';
+        entry.foundAt = new Date().toISOString();
+      }
       save();
     }
   } catch (err) {

@@ -132,11 +132,11 @@ app.post('/api/cache/clear', (req, res) => {
 
 // POST /api/watchlist — add entry
 app.post('/api/watchlist', (req, res) => {
-  const { restaurantId, restaurantName, date, guests, timePreference, name, email, phone } = req.body;
-  if (!restaurantId || !date || !guests || !name || !email) {
-    return res.status(400).json({ error: 'restaurantId, date, guests, name och email krävs' });
+  const { restaurantId, restaurantName, date, guests, preferredTimes, firstName, lastName, email, phone, autoBook } = req.body;
+  if (!restaurantId || !date || !guests || !firstName || !lastName || !email) {
+    return res.status(400).json({ error: 'restaurantId, date, guests, firstName, lastName och email krävs' });
   }
-  const id = watchlist.add({ restaurantId, restaurantName, date, guests, timePreference, name, email, phone });
+  const id = watchlist.add({ restaurantId, restaurantName, date, guests, preferredTimes, firstName, lastName, email, phone, autoBook: !!autoBook });
   res.json({ ok: true, id });
 });
 

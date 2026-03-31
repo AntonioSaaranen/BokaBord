@@ -384,10 +384,15 @@ function watchlistFormHtml(restaurant, date) {
         <input type="hidden" name="restaurantName" value="${restaurant.name}">
         <input type="hidden" name="date" value="${dateStr}">
         <div class="watchlist-fields">
-          <input class="wl-input" type="text" name="name" placeholder="Ditt namn" required>
+          <input class="wl-input" type="text" name="firstName" placeholder="Förnamn" required>
+          <input class="wl-input" type="text" name="lastName" placeholder="Efternamn" required>
           <input class="wl-input" type="email" name="email" placeholder="E-post" required>
           <input class="wl-input" type="tel" name="phone" placeholder="Telefon (valfritt)">
         </div>
+        <label class="wl-autobook-toggle">
+          <input type="checkbox" name="autoBook">
+          <span class="wl-autobook-label">Boka automatiskt när bord blir ledigt</span>
+        </label>
         <div class="wl-times-section">
           <div class="wl-times-label">Bevaka tider (lämna tomt för alla):</div>
           <div class="wl-times-grid" id="wl-times-grid">
@@ -462,9 +467,11 @@ function initWatchlistSection(restaurant, date, guests) {
       date: fd.get('date'),
       guests,
       preferredTimes: preferredTimes.length > 0 ? preferredTimes : null,
-      name: fd.get('name'),
+      firstName: fd.get('firstName'),
+      lastName: fd.get('lastName'),
       email: fd.get('email'),
       phone: fd.get('phone') || null,
+      autoBook: fd.get('autoBook') === 'on',
     };
     try {
       const res = await fetch(`${API_BASE}/watchlist`, {
@@ -475,6 +482,10 @@ function initWatchlistSection(restaurant, date, guests) {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       form.querySelectorAll('input[type="text"], input[type="email"], input[type="tel"]').forEach(el => { el.value = ''; });
       form.querySelectorAll('input[type="checkbox"]').forEach(el => { el.checked = false; });
+      const autoBookChecked = payload.autoBook;
+      confirm.textContent = autoBookChecked
+        ? 'Autobokning aktiverad! Bokar automatiskt när ett bord dyker upp.'
+        : 'Bevakning tillagd! Vi meddelar dig när ett bord blir ledigt.';
       confirm.classList.remove('hidden');
       setTimeout(() => {
         form.classList.add('hidden');
@@ -492,17 +503,26 @@ function initWatchlistSection(restaurant, date, guests) {
 function showToast(alert) {
   const container = document.getElementById('toast-container');
   const toast = document.createElement('div');
-  toast.className = 'toast';
+  const isAutoBooked = alert.autoBooked;
+  const isAutoFailed = alert.autoBookFailed;
+  toast.className = 'toast' + (isAutoBooked ? ' toast--booked' : '');
   const times = alert.slots.map(s => s.time).join(', ');
+  const userName = [alert.user.firstName, alert.user.lastName].filter(Boolean).join(' ');
+  const statusLine = isAutoBooked
+    ? `<p class="toast-status toast-status--success">Bokat automatiskt: <strong>${alert.bookedTime}</strong></p>`
+    : isAutoFailed
+    ? `<p class="toast-status toast-status--warn">Autobokning misslyckades — boka manuellt</p>`
+    : '';
   toast.innerHTML = `
     <div class="toast-header">
       <strong>${alert.restaurantName}</strong>
       <button class="toast-close">✕</button>
     </div>
     <div class="toast-body">
+      ${statusLine}
       <p>${alert.date} — lediga tider: <strong>${times}</strong></p>
-      <p class="toast-user">${alert.user.name} · ${alert.user.email}${alert.user.phone ? ' · ' + alert.user.phone : ''}</p>
-      <a class="toast-book-btn" href="${alert.bookingUrl}" target="_blank" rel="noopener noreferrer">Boka nu →</a>
+      <p class="toast-user">${userName} · ${alert.user.email}${alert.user.phone ? ' · ' + alert.user.phone : ''}</p>
+      ${!isAutoBooked ? `<a class="toast-book-btn" href="${alert.bookingUrl}" target="_blank" rel="noopener noreferrer">Boka nu →</a>` : ''}
     </div>
   `;
   toast.querySelector('.toast-close').addEventListener('click', () => toast.remove());

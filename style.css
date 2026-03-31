@@ -725,6 +725,34 @@ footer {
   accent-color: var(--accent);
 }
 
+.wl-autobook-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-soft);
+  transition: border-color 0.15s, background 0.15s;
+}
+.wl-autobook-toggle:has(input:checked) {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+.wl-autobook-toggle input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--accent);
+  flex-shrink: 0;
+}
+.wl-autobook-label {
+  font-size: 0.82rem;
+  color: var(--text-dim);
+}
+.wl-autobook-toggle:has(input:checked) .wl-autobook-label {
+  color: var(--accent);
+}
+
 .watchlist-form-actions {
   display: flex;
   gap: 8px;
@@ -834,3 +862,15 @@ footer {
   transition: opacity 0.15s;
 }
 .toast-book-btn:hover { opacity: 0.85; }
+
+.toast--booked { border-color: var(--available); }
+.toast--booked .toast-header { background: rgba(82,183,136,0.1); }
+.toast--booked .toast-header strong { color: var(--available); }
+
+.toast-status {
+  font-size: 0.82rem;
+  font-weight: 500;
+  padding: 4px 0 2px;
+}
+.toast-status--success { color: var(--available); }
+.toast-status--warn { color: var(--scarce); }
