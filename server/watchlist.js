@@ -5,7 +5,7 @@ const path = require('path');
 const { scrapeTimeslots, autoBook } = require('./scrapers/bokabord');
 
 const FILE = path.join(__dirname, 'watchlist.json');
-const POLL_MS = 5 * 60 * 1000;
+const POLL_MS = 500;
 
 let entries = [];
 let pendingAlerts = [];
