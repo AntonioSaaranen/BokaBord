@@ -318,6 +318,17 @@ async function scrapeTimeslots(restaurantId, dateStr, guests) {
  * Navigerar till restaurangens bokningssida, väljer datum/tid och fyller i
  * bokningsformuläret med användarens uppgifter. Returnerar { success, reason }.
  * user: { firstName, lastName, email, phone }
+ *
+ * Flödet är härlett från ett fungerande Selenium-skript och matchar
+ * bokabord.se:s Angular-widget exakt:
+ *   1. Välj erfarenhetstyp (middag)
+ *   2. Välj antal gäster
+ *   3. Navigera kalender → klicka datum
+ *   4. Expandera tidslucka (click li) → klicka intern a.book-knapp
+ *   5. Fyll i formulär (firstname / lastname / .guestPhone / email)
+ *   6. Klicka bekräftelseknapp i ConsumerConfirmationHeader
+ *   7. Avfärda eventuell extra dialog (cancel-btn)
+ *   8. Slutbekräfta (Button--primary)
  */
 async function autoBook(restaurantId, dateStr, guests, timeStr, user) {
   const config = RESTAURANTS[restaurantId];
@@ -330,7 +341,7 @@ async function autoBook(restaurantId, dateStr, guests, timeStr, user) {
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({
     userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-    viewport: { width: 1280, height: 800 },
+    viewport: { width: 1920, height: 1080 },
   });
   const page = await context.newPage();
 
@@ -338,18 +349,19 @@ async function autoBook(restaurantId, dateStr, guests, timeStr, user) {
     await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
     await page.waitForTimeout(2000);
 
-    // Steg 1: Måltidstyp
+    // Steg 1: Erfarenhetstyp (föredrar "middag", faller tillbaka på första li)
     await page.evaluate(() => {
-      const lis = Array.from(document.querySelectorAll('li'));
+      const lis = Array.from(document.querySelectorAll('.ExperiencesList li'));
       const meal = lis.find(el => el.textContent.trim().toLowerCase().includes('middag')) || lis[0];
       if (meal) meal.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
     });
     await page.waitForTimeout(2000);
 
-    // Steg 2: Antal gäster
+    // Steg 2: Antal gäster (index = guests - 1, samma som Selenium-skriptet)
     await page.evaluate((g) => {
-      const li = Array.from(document.querySelectorAll('li')).find(el => el.textContent.trim() === String(g));
-      if (li) li.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+      const lis = Array.from(document.querySelectorAll('.SizesList li'));
+      const target = lis[g - 1] || lis.find(el => el.textContent.trim() === String(g));
+      if (target) target.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
     }, guests);
 
     await page.waitForSelector('.ConsumerCalendar', { timeout: 15000 }).catch(() => {});
@@ -418,50 +430,76 @@ async function autoBook(restaurantId, dateStr, guests, timeStr, user) {
       return { success: false, reason: 'date_unavailable' };
     }
 
-    await page.waitForTimeout(3000);
-
-    // Steg 5: Hitta och klicka rätt tidslucka
-    const slotLi = page.locator('li.TimesList-item:not(.not-available)').filter({
-      has: page.locator(`.TimesList-itemTime`).filter({ hasText: timeStr }),
-    });
-    if (await slotLi.count() === 0) {
-      console.warn(`[autoBook] ${restaurantId} tid ${timeStr} ej tillgänglig`);
-      return { success: false, reason: 'time_unavailable' };
-    }
-    await slotLi.first().click({ timeout: 5000 });
     await page.waitForTimeout(2000);
 
-    // Steg 6: Klicka den inre "Boka"-knappen (a.book som triggar setTime)
-    const bookBtn = slotLi.first().locator('a.book').first();
+    // Steg 5: Hitta rätt tidslucka — kontrollera att waitlist-knappen INTE syns (= ledigt)
+    const timeItems = page.locator('li.TimesList-item');
+    const count = await timeItems.count();
+    let targetLi = null;
+
+    for (let i = 0; i < count; i++) {
+      const li = timeItems.nth(i);
+      const timeEl = li.locator('.TimesList-itemTime');
+      const timeText = await timeEl.textContent().catch(() => '');
+      if (timeText.trim() !== timeStr) continue;
+
+      // Ledigt om waitlist-knappen är dold (matchar Selenium-skriptets logik)
+      const waitlistBtn = li.locator('.TimeList-addtoWaitlist');
+      const waitlistVisible = await waitlistBtn.isVisible().catch(() => false);
+      if (waitlistVisible) {
+        console.warn(`[autoBook] ${timeStr} har köplats, ej ledigt`);
+        return { success: false, reason: 'time_unavailable' };
+      }
+      targetLi = li;
+      break;
+    }
+
+    if (!targetLi) {
+      console.warn(`[autoBook] ${restaurantId} tid ${timeStr} hittades inte`);
+      return { success: false, reason: 'time_not_found' };
+    }
+
+    // Steg 6: Expandera tidsluckan (klicka li) → klicka den inre a.book-knappen
+    await targetLi.click({ timeout: 5000 });
+    await page.waitForTimeout(1000);
+
+    const bookBtn = targetLi.locator('a.book').first();
     if (await bookBtn.count() === 0) {
-      console.warn(`[autoBook] ${restaurantId} hittade ingen intern bokningsknapp`);
+      console.warn(`[autoBook] ${restaurantId} ingen a.book-knapp hittad`);
       return { success: false, reason: 'no_book_button' };
     }
     await bookBtn.click({ timeout: 5000 });
-    await page.waitForTimeout(3000);
+    await page.waitForTimeout(5000);
 
     // Steg 7: Fyll i formuläret
     await page.fill('input[name="firstname"]', user.firstName);
     await page.fill('input[name="lastname"]', user.lastName);
-    await page.fill('input[ng-model="booking.email"]', user.email);
-    if (user.phone) {
-      await page.fill('input[ng-model="booking.phone"]', user.phone).catch(() => {});
+    // .guestPhone är telefonfältet (bekräftat av Selenium-skriptet)
+    await page.locator('.guestPhone').fill(user.phone || '').catch(() => {});
+    await page.fill('input[name="email"]', user.email);
+
+    await page.waitForTimeout(5000);
+
+    // Steg 8: Bekräftelseknapp inuti ConsumerConfirmationHeader
+    const confirmBtn = page.locator('.ConsumerConfirmationHeader .Button').first();
+    if (await confirmBtn.count() === 0) {
+      console.warn(`[autoBook] Ingen bekräftelseknapp hittad`);
+      return { success: false, reason: 'no_confirm_button' };
     }
-    await page.waitForTimeout(500);
+    await confirmBtn.click({ timeout: 5000 });
+    await page.waitForTimeout(5000);
 
-    // Steg 8: Acceptera villkor
-    await page.locator('div[ng-click*="terms.restaurant"]').click().catch(() => {});
-    await page.locator('div[ng-click*="terms.bokabord"]').click().catch(() => {});
-    await page.waitForTimeout(500);
+    // Steg 9: Avfärda eventuell extra dialog (t.ex. villkorsprompt)
+    await page.locator('.cancel-btn').click({ timeout: 3000 }).catch(() => {});
+    await page.waitForTimeout(5000);
 
-    // Steg 9: Skicka
-    await page.locator('button[ng-click="next()"]').click({ timeout: 5000 });
-    await page.waitForTimeout(6000);
+    // Steg 10: Slutbekräfta
+    await page.locator('.Button--primary').click({ timeout: 5000 });
+    await page.waitForTimeout(5000);
 
-    // Steg 10: Bekräftelsekontroll
+    // Steg 11: Kontrollera om bokning lyckades (formuläret borta eller bekräftelsetext)
     const success = await page.evaluate(() => {
       const txt = (document.body.innerText || '').toLowerCase();
-      // Formulärfälten borta = troligen lyckades; eller explicit bekräftelsetext
       const formGone = document.querySelectorAll('input[name="firstname"]').length === 0;
       const hasConfirmText = txt.includes('tack') || txt.includes('bekräft') ||
                              txt.includes('confirmation') || txt.includes('thank');
