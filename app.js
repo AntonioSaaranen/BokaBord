@@ -265,11 +265,9 @@ function buildCalendar(restaurant, monthOffset) {
       el.className = 'cal-day past';
     } else if (isClosed) {
       el.className = 'cal-day closed';
-      el.appendChild(Object.assign(document.createElement('span'), { className: 'dot' }));
     } else {
       const avail = getAvailability(restaurant.id, date, restaurant.popularity);
       el.className = 'cal-day ' + avail;
-      el.appendChild(Object.assign(document.createElement('span'), { className: 'dot' }));
       if (avail !== 'full') {
         el.addEventListener('click', () => openModal(restaurant, date));
       }

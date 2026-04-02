@@ -7,10 +7,23 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
+
   <header>
+    <div class="header-scene" aria-hidden="true">
+      <div class="scene-blob scene-blob--1"></div>
+      <div class="scene-blob scene-blob--2"></div>
+      <div class="scene-blob scene-blob--3"></div>
+      <div class="scene-blob scene-blob--4"></div>
+    </div>
     <div class="header-inner">
+      <p class="header-eyebrow">Stockholm &nbsp;·&nbsp; Fine Dining</p>
       <h1>Boka Bord</h1>
-      <p class="tagline">Stockholms finaste restauranger — två månader framöver</p>
+      <div class="header-rule">
+        <span class="header-rule-line"></span>
+        <span class="header-rule-diamond"></span>
+        <span class="header-rule-line"></span>
+      </div>
+      <p class="tagline">Tillgänglighet i realtid — två månader framöver</p>
     </div>
   </header>
 
@@ -20,8 +33,8 @@
     <div class="panel" id="panel">
       <div class="panel-header">
         <div class="panel-meta">
-          <h2 class="panel-name"></h2>
           <div class="panel-cuisine"></div>
+          <h2 class="panel-name"></h2>
           <div class="panel-desc"></div>
           <p class="panel-note" hidden></p>
         </div>
@@ -40,10 +53,22 @@
         <div class="calendar-tabs" id="cal-tabs"></div>
         <div class="calendar-wrapper" id="cal-wrapper"></div>
         <div class="legend">
-          <div class="legend-item"><div class="legend-dot" style="background:var(--available)"></div> Lediga bord</div>
-          <div class="legend-item"><div class="legend-dot" style="background:var(--scarce)"></div> Sista platser</div>
-          <div class="legend-item"><div class="legend-dot" style="background:var(--full)"></div> Fullbokat</div>
-          <div class="legend-item"><div class="legend-dot" style="background:var(--closed)"></div> Stängt</div>
+          <div class="legend-item">
+            <div class="legend-swatch legend-swatch--available"></div>
+            Lediga bord
+          </div>
+          <div class="legend-item">
+            <div class="legend-swatch legend-swatch--scarce"></div>
+            Sista platser
+          </div>
+          <div class="legend-item">
+            <div class="legend-swatch legend-swatch--full"></div>
+            Fullbokat
+          </div>
+          <div class="legend-item">
+            <div class="legend-swatch legend-swatch--closed"></div>
+            Stängt
+          </div>
         </div>
       </div>
     </div>
