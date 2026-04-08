@@ -49,6 +49,7 @@ async function scrapeBokabord(restaurantId) {
   const page = await context.newPage();
   const availability = {};
 
+
   try {
     await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
     await page.waitForTimeout(2000);
@@ -68,11 +69,12 @@ async function scrapeBokabord(restaurantId) {
       if (guest) guest.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
     });
 
-    // Wait for ConsumerCalendar to render
+    // Wait for ConsumerCalendar to render AND for availability API calls to complete
     await page.waitForSelector('.ConsumerCalendar', { timeout: 15000 }).catch(() => {
       console.warn(`[${restaurantId}] ConsumerCalendar not found — calendar may not have loaded`);
     });
-    await page.waitForTimeout(1500);
+    await page.waitForLoadState('networkidle').catch(() => {});
+    await page.waitForTimeout(1000);
 
     // Scrape all visible months, navigate if we have fewer than 3
     const scrapedMonths = new Set();
@@ -80,7 +82,6 @@ async function scrapeBokabord(restaurantId) {
     for (let pass = 0; pass < 3; pass++) {
       const months = await page.evaluate((MONTHS) => {
         const result = [];
-        // Each month has its own container with heading + day grid
         const containers = document.querySelectorAll('.ConsumerCalendar-month');
         containers.forEach(container => {
           const heading = container.querySelector('.ConsumerCalendar-monthHeading');
@@ -102,19 +103,8 @@ async function scrapeBokabord(restaurantId) {
             if (isNaN(dayNum) || dayNum < 1) return;
 
             const dateStr = `${year}-${String(monthNum).padStart(2, '0')}-${String(dayNum).padStart(2, '0')}`;
-
-            let status;
-            if (classes.includes('is-disabled') || classes.includes('offDay')) {
-              // Stängt eller fullbokat
-              status = 'full';
-            } else if (classes.includes('activeDay')) {
-              // activeDay = dagens datum markerat i Angular — inte nödvändigtvis ledigt
-              status = 'full';
-            } else {
-              // Ingen statusklass = ledigt att boka
-              status = 'available';
-            }
-
+            // is-disabled = fullbokat eller stängt, offDay = permanent stängt (t.ex. måndag)
+            const status = classes.includes('is-disabled') ? 'full' : 'available';
             days.push({ date: dateStr, status });
           });
 
@@ -129,7 +119,8 @@ async function scrapeBokabord(restaurantId) {
         if (scrapedMonths.has(key)) continue;
         scrapedMonths.add(key);
         newMonthsFound++;
-        console.log(`[${restaurantId}] ${headingText} — ${days.length} days`);
+        const availCount = days.filter(d => d.status === 'available').length;
+        console.log(`[${restaurantId}] ${headingText} — ${days.length} days, ${availCount} available`);
         days.forEach(({ date, status }) => { availability[date] = status; });
       }
 
@@ -163,7 +154,8 @@ async function scrapeBokabord(restaurantId) {
         console.warn(`[${restaurantId}] Cannot navigate further (pass ${pass})`);
         break;
       }
-      await page.waitForTimeout(1500);
+      await page.waitForLoadState('networkidle').catch(() => {});
+      await page.waitForTimeout(1000);
     }
 
   } finally {
