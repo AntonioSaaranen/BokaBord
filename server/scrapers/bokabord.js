@@ -103,7 +103,6 @@ async function scrapeBokabord(restaurantId) {
             if (isNaN(dayNum) || dayNum < 1) return;
 
             const dateStr = `${year}-${String(monthNum).padStart(2, '0')}-${String(dayNum).padStart(2, '0')}`;
-            // is-disabled = fullbokat eller stängt, offDay = permanent stängt (t.ex. måndag)
             const status = classes.includes('is-disabled') ? 'full' : 'available';
             days.push({ date: dateStr, status });
           });
@@ -120,7 +119,7 @@ async function scrapeBokabord(restaurantId) {
         scrapedMonths.add(key);
         newMonthsFound++;
         const availCount = days.filter(d => d.status === 'available').length;
-        console.log(`[${restaurantId}] ${headingText} — ${days.length} days, ${availCount} available`);
+        console.log(`[${restaurantId}] ${headingText} — ${days.length} days, ${availCount} possibly available`);
         days.forEach(({ date, status }) => { availability[date] = status; });
       }
 
@@ -156,6 +155,95 @@ async function scrapeBokabord(restaurantId) {
       }
       await page.waitForLoadState('networkidle').catch(() => {});
       await page.waitForTimeout(1000);
+    }
+
+    // Verifiera varje "tillgänglig" dag genom att klicka och räkna tidsluckor i samma session.
+    // Detta är den enda pålitliga metoden — bokabords widget markerar inte alla fullbokade dagar med is-disabled.
+    const today = new Date().toISOString().slice(0, 10);
+    const datesToVerify = Object.entries(availability)
+      .filter(([date, status]) => status === 'available' && date >= today)
+      .map(([date]) => date)
+      .sort();
+
+    console.log(`[${restaurantId}] Verifying ${datesToVerify.length} available dates via timeslot check...`);
+
+    for (const dateStr of datesToVerify) {
+      const [y, m, d] = dateStr.split('-').map(Number);
+
+      // Navigera till rätt månad om den inte syns
+      for (let nav = 0; nav < 4; nav++) {
+        const visible = await page.evaluate(({ ty, tm, MONTHS }) => {
+          for (const c of document.querySelectorAll('.ConsumerCalendar-month')) {
+            const h = c.querySelector('.ConsumerCalendar-monthHeading');
+            if (!h) continue;
+            const match = h.textContent.trim().match(/(\w+)\s+(\d{4})/);
+            if (match && MONTHS[match[1]] === tm && parseInt(match[2]) === ty) return true;
+          }
+          return false;
+        }, { ty: y, tm: m, MONTHS: MONTH_MAP });
+        if (visible) break;
+
+        await page.evaluate(() => {
+          const btns = Array.from(document.querySelectorAll('.ConsumerCalendar-monthHeading button'));
+          const ngEls = Array.from(document.querySelectorAll('[ng-click*="next"],[ng-click*="Next"],[ng-click*="forward"]'));
+          for (const el of [...btns, ...ngEls]) {
+            const t = el.textContent.trim(), cls = (el.className || '').toString(), ng = el.getAttribute('ng-click') || '';
+            if (t.includes('>') || t.includes('›') || t.includes('→') || cls.includes('next') || ng.toLowerCase().includes('next')) {
+              el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+              return;
+            }
+          }
+          if (btns.length) btns[btns.length - 1].dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+        });
+        await page.waitForTimeout(800);
+      }
+
+      // Klicka på dagen
+      const clicked = await page.evaluate(({ ty, tm, td, MONTHS }) => {
+        for (const c of document.querySelectorAll('.ConsumerCalendar-month')) {
+          const h = c.querySelector('.ConsumerCalendar-monthHeading');
+          if (!h) continue;
+          const match = h.textContent.trim().match(/(\w+)\s+(\d{4})/);
+          if (!match || MONTHS[match[1]] !== tm || parseInt(match[2]) !== ty) continue;
+          for (const el of c.querySelectorAll('.ConsumerCalendar-day')) {
+            if (el.className.includes('is-out-of-month') || el.className.includes('is-disabled')) continue;
+            const txt = el.querySelector('.ConsumerCalendar-dayText');
+            if (txt && parseInt(txt.textContent.trim()) === td) {
+              el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+              return true;
+            }
+          }
+        }
+        return false;
+      }, { ty: y, tm: m, td: d, MONTHS: MONTH_MAP });
+
+      if (!clicked) {
+        // Dag inte klickbar — markera som full
+        availability[dateStr] = 'full';
+        console.log(`[${restaurantId}] ${dateStr} → full (not clickable)`);
+        continue;
+      }
+
+      await page.waitForTimeout(2000);
+
+      // Räkna öppna tidsluckor
+      const openSlots = await page.evaluate(() => {
+        let count = 0;
+        document.querySelectorAll('li.TimesList-item').forEach(el => {
+          const timeEl = el.querySelector('.TimesList-itemTime');
+          const time = timeEl ? timeEl.textContent.trim() : '';
+          if (!time.match(/^\d{1,2}:\d{2}$/)) return;
+          if (!el.className.includes('not-available')) count++;
+        });
+        return count;
+      });
+
+      if (openSlots === 0) {
+        availability[dateStr] = 'full';
+        console.log(`[${restaurantId}] ${dateStr} → full (0 slots)`);
+      } else {
+        console.log(`[${restaurantId}] ${dateStr} → available (${openSlots} slots)`);
+      }
     }
 
   } finally {
