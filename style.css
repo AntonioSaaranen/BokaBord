@@ -40,7 +40,7 @@ header {
   position: relative;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
-  padding: 72px 24px 60px;
+  padding: 28px 24px 22px;
   text-align: center;
   overflow: hidden;
 }
@@ -104,18 +104,18 @@ header {
   letter-spacing: 0.28em;
   text-transform: uppercase;
   color: var(--text-muted);
-  margin-bottom: 22px;
+  margin-bottom: 10px;
   font-weight: 400;
 }
 
 header h1 {
   font-family: 'Playfair Display', Georgia, serif;
-  font-size: clamp(3rem, 8vw, 5.2rem);
+  font-size: clamp(1.4rem, 3.5vw, 2rem);
   font-weight: 400;
-  letter-spacing: 0.22em;
+  letter-spacing: 0.18em;
   color: var(--accent);
   line-height: 1;
-  margin-bottom: 28px;
+  margin-bottom: 12px;
   text-shadow: 0 0 80px rgba(201,169,110,0.25);
 }
 
@@ -124,7 +124,7 @@ header h1 {
   align-items: center;
   justify-content: center;
   gap: 14px;
-  margin-bottom: 22px;
+  margin-bottom: 10px;
 }
 .header-rule-line {
   display: block;
@@ -263,7 +263,7 @@ header h1 {
 
 .panel-name {
   font-family: 'Playfair Display', Georgia, serif;
-  font-size: clamp(1.8rem, 3.5vw, 2.8rem);
+  font-size: clamp(1.2rem, 2vw, 1.6rem);
   font-weight: 400;
   letter-spacing: 0.01em;
   color: var(--text);
@@ -420,7 +420,7 @@ header h1 {
 }
 
 .cal-day {
-  aspect-ratio: 1;
+  aspect-ratio: 1 / 0.7;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -712,7 +712,7 @@ footer {
 }
 
 @media (max-width: 640px) {
-  header { padding: 52px 20px 44px; }
+  header { padding: 20px 20px 16px; }
   .app-layout { flex-direction: column; }
 
   .sidebar {
@@ -745,7 +745,7 @@ footer {
   .rest-item-cuisine { display: none; }
 
   .panel { padding: 28px 20px 56px; }
-  .panel-name { font-size: 1.8rem; }
+  .panel-name { font-size: 1.2rem; }
   .modal-box { padding: 36px 24px; }
   .modal-box::before { left: 32px; right: 32px; }
 }

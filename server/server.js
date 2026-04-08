@@ -115,6 +115,18 @@ app.get('/api/timeslots/:restaurant', async (req, res) => {
   const key = `timeslots:${restaurant}:${date}:${guestsNum}`;
   try {
     const data = await singleFlight(key, () => scrapeTimeslots(restaurant, date, guestsNum), TIMESLOT_TTL_MS);
+
+    // Self-correct: if no slots came back, invalidate the availability cache so the
+    // calendar updates on next load instead of staying misleadingly green.
+    if (data.slots.length === 0) {
+      const availKey = restaurant;
+      const entry = cache.get(availKey);
+      if (entry && entry.data && entry.data.availability && entry.data.availability[date] === 'available') {
+        entry.data.availability[date] = 'full';
+        console.log(`[timeslots] self-correct: ${restaurant} ${date} → full (0 slots)`);
+      }
+    }
+
     res.json(data);
   } catch (err) {
     console.error(`[timeslots] ${restaurant} ${date}:`, err.message);
