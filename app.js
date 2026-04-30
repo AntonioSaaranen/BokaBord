@@ -1,6 +1,6 @@
 'use strict';
 
-const API_BASE = 'http://localhost:3000/api';
+const API_BASE = '/api';
 
 // ── State ────────────────────────────────────────────────────────────
 const liveAvailability = {};
