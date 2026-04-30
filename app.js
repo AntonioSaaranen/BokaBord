@@ -268,9 +268,8 @@ function buildCalendar(restaurant, monthOffset) {
     } else {
       const avail = getAvailability(restaurant.id, date, restaurant.popularity);
       el.className = 'cal-day ' + avail;
-      if (avail !== 'full') {
-        el.addEventListener('click', () => openModal(restaurant, date));
-      }
+      if (avail === 'full') el.style.cursor = 'pointer';
+      el.addEventListener('click', () => openModal(restaurant, date));
     }
 
     if (isToday) el.classList.add('today');
