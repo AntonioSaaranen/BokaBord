@@ -41,7 +41,10 @@ async function scrapeBokabord(restaurantId) {
 
   const domain = config.domain || 'app.bokabord.se';
   const url = `https://${domain}/reservation/?hash=${config.hash}&version=new&lang=sv`;
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox'],
+  });
   const context = await browser.newContext({
     userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
     viewport: { width: 1280, height: 800 },
@@ -49,20 +52,19 @@ async function scrapeBokabord(restaurantId) {
   const page = await context.newPage();
   const availability = {};
 
-
   try {
     await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
-    await page.waitForTimeout(2000);
 
     // Step 1: Click meal type — prefer "Middag", fall back to first li
+    await page.waitForSelector('li', { timeout: 10000 });
     await page.evaluate(() => {
       const lis = Array.from(document.querySelectorAll('li'));
       const meal = lis.find(el => el.textContent.trim().toLowerCase().includes('middag')) || lis[0];
       if (meal) meal.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
     });
-    await page.waitForTimeout(2000);
 
-    // Step 2: Click guest count 2 — fall back to first guest li
+    // Step 2: Click guest count 2 — wait for SizesList to appear
+    await page.waitForSelector('li', { timeout: 10000 });
     await page.evaluate(() => {
       const lis = Array.from(document.querySelectorAll('li'));
       const guest = lis.find(el => el.textContent.trim() === '2') || lis[1];
@@ -74,7 +76,6 @@ async function scrapeBokabord(restaurantId) {
       console.warn(`[${restaurantId}] ConsumerCalendar not found — calendar may not have loaded`);
     });
     await page.waitForLoadState('networkidle').catch(() => {});
-    await page.waitForTimeout(1000);
 
     // Scrape all visible months, navigate if we have fewer than 3
     const scrapedMonths = new Set();
@@ -181,7 +182,10 @@ async function scrapeTimeslots(restaurantId, dateStr, guests) {
 
   const domain = config.domain || 'app.bokabord.se';
   const url = `https://${domain}/reservation/?hash=${config.hash}&version=new&lang=sv`;
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox'],
+  });
   const context = await browser.newContext({
     userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
     viewport: { width: 1280, height: 800 },
@@ -190,17 +194,17 @@ async function scrapeTimeslots(restaurantId, dateStr, guests) {
 
   try {
     await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
-    await page.waitForTimeout(2000);
 
     // Steg 1: Klicka måltidstyp — föredrar "Middag", faller annars tillbaka på första li
+    await page.waitForSelector('li', { timeout: 10000 });
     await page.evaluate(() => {
       const lis = Array.from(document.querySelectorAll('li'));
       const meal = lis.find(el => el.textContent.trim().toLowerCase().includes('middag')) || lis[0];
       if (meal) meal.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
     });
-    await page.waitForTimeout(2000);
 
     // Steg 2: Antal gäster
+    await page.waitForSelector('li', { timeout: 10000 });
     await page.evaluate((g) => {
       const li = Array.from(document.querySelectorAll('li')).find(el =>
         el.textContent.trim() === String(g)
@@ -209,7 +213,7 @@ async function scrapeTimeslots(restaurantId, dateStr, guests) {
     }, guests);
 
     await page.waitForSelector('.ConsumerCalendar', { timeout: 15000 }).catch(() => {});
-    await page.waitForTimeout(1500);
+    await page.waitForTimeout(1000);
 
     // Steg 3: Navigera till rätt månad om den inte syns
     for (let pass = 0; pass < 6; pass++) {
@@ -250,7 +254,7 @@ async function scrapeTimeslots(restaurantId, dateStr, guests) {
       });
 
       if (!navigated) break;
-      await page.waitForTimeout(1000);
+      await page.waitForTimeout(500);
     }
 
     // Steg 4: Klicka på rätt datum
@@ -282,7 +286,7 @@ async function scrapeTimeslots(restaurantId, dateStr, guests) {
     }
 
     // Vänta på tidsluckor
-    await page.waitForTimeout(3000);
+    await page.waitForSelector('li.TimesList-item', { timeout: 8000 }).catch(() => {});
 
     // Extrahera tidsluckor från TimesList-item li-element
     const slots = await page.evaluate(() => {
@@ -329,7 +333,10 @@ async function autoBook(restaurantId, dateStr, guests, timeStr, user) {
   const domain = config.domain || 'app.bokabord.se';
   const url = `https://${domain}/reservation/?hash=${config.hash}&version=new&lang=sv`;
 
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox'],
+  });
   const context = await browser.newContext({
     userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
     viewport: { width: 1920, height: 1080 },
