@@ -288,8 +288,11 @@ function formatDateSv(date) {
 async function fetchModalTimeslots(restaurant, date, guests, container) {
   const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
   container.innerHTML = '<div class="slots-loading">Hämtar tider…</div>';
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 30000);
   try {
-    const res = await fetch(`${API_BASE}/timeslots/${restaurant.id}?date=${dateStr}&guests=${guests}`);
+    const res = await fetch(`${API_BASE}/timeslots/${restaurant.id}?date=${dateStr}&guests=${guests}`, { signal: controller.signal });
+    clearTimeout(timer);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     const openSlots = (data.slots || []).filter(s => s.status === 'open');
@@ -299,6 +302,7 @@ async function fetchModalTimeslots(restaurant, date, guests, container) {
       container.innerHTML = openSlots.map(s => `<span class="time-slot open">${s.time}</span>`).join('');
     }
   } catch (err) {
+    clearTimeout(timer);
     console.warn(`[timeslots] ${restaurant.id}:`, err.message);
     container.innerHTML = '<div class="no-slots">Kunde inte hämta tider.</div>';
   }

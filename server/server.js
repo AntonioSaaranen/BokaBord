@@ -114,7 +114,13 @@ app.get('/api/timeslots/:restaurant', async (req, res) => {
 
   const key = `timeslots:${restaurant}:${date}:${guestsNum}`;
   try {
-    const data = await singleFlight(key, () => scrapeTimeslots(restaurant, date, guestsNum), TIMESLOT_TTL_MS);
+    const timeout = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('scrape timeout')), 25000)
+    );
+    const data = await Promise.race([
+      singleFlight(key, () => scrapeTimeslots(restaurant, date, guestsNum), TIMESLOT_TTL_MS),
+      timeout,
+    ]);
 
     // Self-correct: if no slots came back, invalidate the availability cache so the
     // calendar updates on next load instead of staying misleadingly green.
