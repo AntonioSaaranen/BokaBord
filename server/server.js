@@ -3,7 +3,7 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
-const { scrapeBokabord, scrapeTimeslots } = require('./scrapers/bokabord');
+const { scrapeBokabord, scrapeTimeslots, closeBrowser } = require('./scrapers/bokabord');
 const watchlist = require('./watchlist');
 
 const app = express();
@@ -177,3 +177,9 @@ app.listen(PORT, () => {
   console.log(`API: http://localhost:${PORT}/api/availability\n`);
   watchlist.start();
 });
+
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  process.on(signal, () => {
+    closeBrowser().finally(() => process.exit(0));
+  });
+}

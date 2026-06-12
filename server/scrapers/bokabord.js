@@ -32,6 +32,37 @@ const MONTH_MAP = {
   Juli: 7, Augusti: 8, Oktober: 10,
 };
 
+// ── Delad browser ────────────────────────────────────────────────────
+// En Chromium-instans återanvänds av alla scrapes; varje scrape får en
+// egen isolerad context som stängs efteråt. Startas om automatiskt om
+// instansen kraschat eller kopplats ner.
+
+let browserPromise = null;
+
+async function getBrowser() {
+  if (browserPromise) {
+    const existing = await browserPromise.catch(() => null);
+    if (existing && existing.isConnected()) return existing;
+    browserPromise = null;
+  }
+  console.log('[browser] startar delad Chromium-instans');
+  browserPromise = chromium.launch({
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox'],
+  });
+  return browserPromise;
+}
+
+async function newScrapeContext(viewport = { width: 1280, height: 800 }) {
+  const browser = await getBrowser();
+  const context = await browser.newContext({
+    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    viewport,
+  });
+  const page = await context.newPage();
+  return { context, page };
+}
+
 async function scrapeBokabord(restaurantId) {
   const config = RESTAURANTS[restaurantId];
   if (config === undefined) throw new Error(`Unknown restaurant: ${restaurantId}`);
@@ -41,15 +72,7 @@ async function scrapeBokabord(restaurantId) {
 
   const domain = config.domain || 'app.bokabord.se';
   const url = `https://${domain}/reservation/?hash=${config.hash}&version=new&lang=sv`;
-  const browser = await chromium.launch({
-    headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox'],
-  });
-  const context = await browser.newContext({
-    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-    viewport: { width: 1280, height: 800 },
-  });
-  const page = await context.newPage();
+  const { context, page } = await newScrapeContext();
   const availability = {};
 
   try {
@@ -159,7 +182,7 @@ async function scrapeBokabord(restaurantId) {
     }
 
   } finally {
-    await browser.close();
+    await context.close();
   }
 
   console.log(`[${restaurantId}] Scraped ${Object.keys(availability).length} dates`);
@@ -182,15 +205,7 @@ async function scrapeTimeslots(restaurantId, dateStr, guests) {
 
   const domain = config.domain || 'app.bokabord.se';
   const url = `https://${domain}/reservation/?hash=${config.hash}&version=new&lang=sv`;
-  const browser = await chromium.launch({
-    headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox'],
-  });
-  const context = await browser.newContext({
-    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-    viewport: { width: 1280, height: 800 },
-  });
-  const page = await context.newPage();
+  const { context, page } = await newScrapeContext();
 
   try {
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
@@ -305,7 +320,7 @@ async function scrapeTimeslots(restaurantId, dateStr, guests) {
     return { restaurantId, date: dateStr, guests, slots };
 
   } finally {
-    await browser.close();
+    await context.close();
   }
 }
 
@@ -333,15 +348,7 @@ async function autoBook(restaurantId, dateStr, guests, timeStr, user) {
   const domain = config.domain || 'app.bokabord.se';
   const url = `https://${domain}/reservation/?hash=${config.hash}&version=new&lang=sv`;
 
-  const browser = await chromium.launch({
-    headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox'],
-  });
-  const context = await browser.newContext({
-    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-    viewport: { width: 1920, height: 1080 },
-  });
-  const page = await context.newPage();
+  const { context, page } = await newScrapeContext({ width: 1920, height: 1080 });
 
   try {
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
@@ -508,8 +515,15 @@ async function autoBook(restaurantId, dateStr, guests, timeStr, user) {
     return { success, reason: success ? 'booked' : 'form_error' };
 
   } finally {
-    await browser.close();
+    await context.close();
   }
 }
 
-module.exports = { scrapeBokabord, scrapeTimeslots, autoBook };
+async function closeBrowser() {
+  if (!browserPromise) return;
+  const browser = await browserPromise.catch(() => null);
+  browserPromise = null;
+  if (browser) await browser.close().catch(() => {});
+}
+
+module.exports = { scrapeBokabord, scrapeTimeslots, autoBook, closeBrowser };
