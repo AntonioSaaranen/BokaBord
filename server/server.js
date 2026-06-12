@@ -12,6 +12,7 @@ const PORT = process.env.PORT || 3000;
 // Aktiva restauranger — övriga är pausade för att hålla nere antalet scrapes.
 // Lägg tillbaka id:n här för att aktivera fler igen.
 const ACTIVE_RESTAURANTS = ['lilla-ego', 'frantzen'];
+const KNOWN_RESTAURANTS = ['lilla-ego', 'hantverket', 'frantzen', 'ekstedt', 'oaxen-krog', 'ag'];
 
 // Serve static frontend files
 app.use(express.static(path.join(__dirname, '..')));
@@ -49,20 +50,58 @@ function singleFlight(key, fetchFn, ttl = CACHE_TTL_MS) {
   return promise;
 }
 
+// ── Bakgrundsverifiering av "lediga" dagar ───────────────────────────
+// Månadsvyn på bokabord.se gråmarkerar bara helt stängda dagar, så en dag
+// där alla tider är bortbokade ser ändå ledig ut. Efter varje kalender-
+// scrape verifieras därför de gröna dagarna i lugn takt (en var 30:e
+// sekund) mot tidsluckorna, och dagar utan öppna tider rättas till 'full'.
+
+const VERIFY_DELAY_MS = 30 * 1000;
+const verifying = new Set();
+
+function scheduleVerification(restaurantId, data) {
+  if (verifying.has(restaurantId)) return;
+  const dates = Object.keys(data.availability)
+    .filter((d) => data.availability[d] === 'available')
+    .sort();
+  if (dates.length === 0) return;
+  verifying.add(restaurantId);
+
+  (async () => {
+    try {
+      for (const date of dates) {
+        await new Promise((r) => setTimeout(r, VERIFY_DELAY_MS));
+        const entry = cache.get(restaurantId);
+        if (!entry || entry.data !== data) return; // en nyare scrape har tagit över
+        try {
+          const key = `timeslots:${restaurantId}:${date}:2`;
+          const result = await singleFlight(key, () => scrapeTimeslots(restaurantId, date, 2), TIMESLOT_TTL_MS);
+          if (!result.slots.some((s) => s.status === 'open')) {
+            data.availability[date] = 'full';
+            console.log(`[verify] ${restaurantId} ${date} → full (inga öppna tider)`);
+          }
+        } catch (err) {
+          console.warn(`[verify] ${restaurantId} ${date}:`, err.message);
+        }
+      }
+      console.log(`[verify] ${restaurantId} klar — ${dates.length} dagar kontrollerade`);
+    } finally {
+      verifying.delete(restaurantId);
+    }
+  })();
+}
+
+async function scrapeAndVerify(restaurantId) {
+  const data = await scrapeBokabord(restaurantId);
+  scheduleVerification(restaurantId, data);
+  return data;
+}
+
 // GET /api/availability/:restaurant
 app.get('/api/availability/:restaurant', async (req, res) => {
   const { restaurant } = req.params;
 
-  const scrapers = {
-    'lilla-ego': () => scrapeBokabord('lilla-ego'),
-    'hantverket': () => scrapeBokabord('hantverket'),
-    'frantzen': () => scrapeBokabord('frantzen'),
-    'ekstedt': () => scrapeBokabord('ekstedt'),
-    'oaxen-krog': () => scrapeBokabord('oaxen-krog'),
-    'ag': () => scrapeBokabord('ag'),
-  };
-
-  if (!scrapers[restaurant]) {
+  if (!KNOWN_RESTAURANTS.includes(restaurant)) {
     return res.status(404).json({ error: 'Unknown restaurant' });
   }
 
@@ -71,7 +110,7 @@ app.get('/api/availability/:restaurant', async (req, res) => {
   }
 
   try {
-    const data = await singleFlight(restaurant, scrapers[restaurant]);
+    const data = await singleFlight(restaurant, () => scrapeAndVerify(restaurant));
     res.json(data);
   } catch (err) {
     console.error(`[error] ${restaurant}:`, err.message);
@@ -83,7 +122,7 @@ app.get('/api/availability/:restaurant', async (req, res) => {
 app.get('/api/availability', async (req, res) => {
   try {
     const results = await Promise.allSettled(
-      ACTIVE_RESTAURANTS.map((id) => singleFlight(id, () => scrapeBokabord(id)))
+      ACTIVE_RESTAURANTS.map((id) => singleFlight(id, () => scrapeAndVerify(id)))
     );
 
     const payload = {};
@@ -122,9 +161,9 @@ app.get('/api/timeslots/:restaurant', async (req, res) => {
       timeout,
     ]);
 
-    // Self-correct: if no slots came back, invalidate the availability cache so the
+    // Self-correct: if no open slots came back, fix the availability cache so the
     // calendar updates on next load instead of staying misleadingly green.
-    if (data.slots.length === 0) {
+    if (!data.slots.some((s) => s.status === 'open')) {
       const availKey = restaurant;
       const entry = cache.get(availKey);
       if (entry && entry.data && entry.data.availability && entry.data.availability[date] === 'available') {
