@@ -195,6 +195,22 @@ header h1 {
   font-weight: 400;
 }
 
+.rest-item.paused { opacity: 0.55; }
+
+.rest-item-paused {
+  font-family: 'Inter', system-ui, sans-serif;
+  font-style: normal;
+  font-size: 0.52rem;
+  color: var(--text-muted);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 6px;
+  vertical-align: middle;
+  margin-left: 4px;
+}
+
 /* ─── Panel ──────────────────────────────────── */
 .panel {
   flex: 1;

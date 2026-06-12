@@ -5,7 +5,7 @@ const path = require('path');
 const { scrapeTimeslots, autoBook } = require('./scrapers/bokabord');
 
 const FILE = path.join(__dirname, 'watchlist.json');
-const POLL_MS = 500;
+const POLL_MS = 5 * 60 * 1000;
 
 let entries = [];
 let pendingAlerts = [];
@@ -116,13 +116,21 @@ async function checkEntry(entry) {
   }
 }
 
+let polling = false;
+
 async function pollAll() {
+  if (polling) return; // hoppa över om förra omgången fortfarande kör
   const watching = entries.filter(e => e.status === 'watching');
   if (!watching.length) return;
+  polling = true;
   console.log(`[watchlist] Kollar ${watching.length} bevakning(ar)...`);
-  for (const entry of watching) {
-    await checkEntry(entry);
-    await new Promise(r => setTimeout(r, 2000));
+  try {
+    for (const entry of watching) {
+      await checkEntry(entry);
+      await new Promise(r => setTimeout(r, 2000));
+    }
+  } finally {
+    polling = false;
   }
 }
 

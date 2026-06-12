@@ -9,6 +9,10 @@ const watchlist = require('./watchlist');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Aktiva restauranger — övriga är pausade för att hålla nere antalet scrapes.
+// Lägg tillbaka id:n här för att aktivera fler igen.
+const ACTIVE_RESTAURANTS = ['lilla-ego', 'frantzen'];
+
 // Serve static frontend files
 app.use(express.static(path.join(__dirname, '..')));
 app.use(cors());
@@ -62,6 +66,10 @@ app.get('/api/availability/:restaurant', async (req, res) => {
     return res.status(404).json({ error: 'Unknown restaurant' });
   }
 
+  if (!ACTIVE_RESTAURANTS.includes(restaurant)) {
+    return res.json({ restaurantId: restaurant, paused: true, availability: {} });
+  }
+
   try {
     const data = await singleFlight(restaurant, scrapers[restaurant]);
     res.json(data);
@@ -71,26 +79,19 @@ app.get('/api/availability/:restaurant', async (req, res) => {
   }
 });
 
-// GET /api/availability — all restaurants in parallel
+// GET /api/availability — alla aktiva restauranger i parallell
 app.get('/api/availability', async (req, res) => {
   try {
-    const [lillaEgo, hantverket, frantzen, ekstedt, oaxenKrog, ag] = await Promise.allSettled([
-      singleFlight('lilla-ego', () => scrapeBokabord('lilla-ego')),
-      singleFlight('hantverket', () => scrapeBokabord('hantverket')),
-      singleFlight('frantzen', () => scrapeBokabord('frantzen')),
-      singleFlight('ekstedt', () => scrapeBokabord('ekstedt')),
-      singleFlight('oaxen-krog', () => scrapeBokabord('oaxen-krog')),
-      singleFlight('ag', () => scrapeBokabord('ag')),
-    ]);
+    const results = await Promise.allSettled(
+      ACTIVE_RESTAURANTS.map((id) => singleFlight(id, () => scrapeBokabord(id)))
+    );
 
-    res.json({
-      'lilla-ego': lillaEgo.status === 'fulfilled' ? lillaEgo.value : { error: lillaEgo.reason?.message },
-      'hantverket': hantverket.status === 'fulfilled' ? hantverket.value : { error: hantverket.reason?.message },
-      'frantzen': frantzen.status === 'fulfilled' ? frantzen.value : { error: frantzen.reason?.message },
-      'ekstedt': ekstedt.status === 'fulfilled' ? ekstedt.value : { error: ekstedt.reason?.message },
-      'oaxen-krog': oaxenKrog.status === 'fulfilled' ? oaxenKrog.value : { error: oaxenKrog.reason?.message },
-      'ag': ag.status === 'fulfilled' ? ag.value : { error: ag.reason?.message },
+    const payload = {};
+    ACTIVE_RESTAURANTS.forEach((id, i) => {
+      const r = results[i];
+      payload[id] = r.status === 'fulfilled' ? r.value : { error: r.reason?.message };
     });
+    res.json(payload);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -106,9 +107,8 @@ app.get('/api/timeslots/:restaurant', async (req, res) => {
   }
 
   const guestsNum = Math.max(1, Math.min(10, parseInt(guests) || 2));
-  const supported = ['lilla-ego', 'hantverket', 'ag', 'frantzen'];
 
-  if (!supported.includes(restaurant)) {
+  if (!ACTIVE_RESTAURANTS.includes(restaurant)) {
     return res.status(404).json({ error: 'Tidsluckor ej tillgängliga för denna restaurang' });
   }
 
@@ -153,6 +153,9 @@ app.post('/api/watchlist', (req, res) => {
   const { restaurantId, restaurantName, date, guests, preferredTimes, firstName, lastName, email, phone, autoBook } = req.body;
   if (!restaurantId || !date || !guests || !firstName || !lastName || !email) {
     return res.status(400).json({ error: 'restaurantId, date, guests, firstName, lastName och email krävs' });
+  }
+  if (!ACTIVE_RESTAURANTS.includes(restaurantId)) {
+    return res.status(400).json({ error: 'Restaurangen är pausad — bevakning ej möjlig just nu' });
   }
   const id = watchlist.add({ restaurantId, restaurantName, date, guests, preferredTimes, firstName, lastName, email, phone, autoBook: !!autoBook });
   res.json({ ok: true, id });

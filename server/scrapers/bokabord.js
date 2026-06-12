@@ -53,7 +53,7 @@ async function scrapeBokabord(restaurantId) {
   const availability = {};
 
   try {
-    await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
     // Step 1: Click meal type — prefer "Middag", fall back to first li
     await page.waitForSelector('li', { timeout: 10000 });
@@ -75,7 +75,7 @@ async function scrapeBokabord(restaurantId) {
     await page.waitForSelector('.ConsumerCalendar', { timeout: 15000 }).catch(() => {
       console.warn(`[${restaurantId}] ConsumerCalendar not found — calendar may not have loaded`);
     });
-    await page.waitForLoadState('networkidle').catch(() => {});
+    await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
 
     // Scrape all visible months, navigate if we have fewer than 3
     const scrapedMonths = new Set();
@@ -154,7 +154,7 @@ async function scrapeBokabord(restaurantId) {
         console.warn(`[${restaurantId}] Cannot navigate further (pass ${pass})`);
         break;
       }
-      await page.waitForLoadState('networkidle').catch(() => {});
+      await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {});
       await page.waitForTimeout(1000);
     }
 
@@ -193,7 +193,7 @@ async function scrapeTimeslots(restaurantId, dateStr, guests) {
   const page = await context.newPage();
 
   try {
-    await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
     // Steg 1: Klicka måltidstyp — föredrar "Middag", faller annars tillbaka på första li
     await page.waitForSelector('li', { timeout: 10000 });
@@ -344,7 +344,7 @@ async function autoBook(restaurantId, dateStr, guests, timeStr, user) {
   const page = await context.newPage();
 
   try {
-    await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
     await page.waitForTimeout(2000);
 
     // Steg 1: Erfarenhetstyp (föredrar "middag", faller tillbaka på första li)

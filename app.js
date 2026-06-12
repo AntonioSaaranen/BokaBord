@@ -10,6 +10,10 @@ let currentGuests = 2;
 let activeMonthOffset = 0;
 
 // ── Restaurant data ──────────────────────────────────────────────────
+// Endast aktiva restauranger hämtar live-data från servern.
+// Lägg till id:n här (och i ACTIVE_RESTAURANTS i server/server.js) för att aktivera fler.
+const ACTIVE_RESTAURANTS = ['lilla-ego', 'frantzen'];
+
 const RESTAURANTS = [
   {
     id: 'lilla-ego',
@@ -75,7 +79,7 @@ const MONTHS_SV = [
   'Juli', 'Augusti', 'September', 'Oktober', 'November', 'December',
 ];
 const DAYS_SV = ['söndag', 'måndag', 'tisdag', 'onsdag', 'torsdag', 'fredag', 'lördag'];
-const TIMESLOT_SUPPORTED = ['lilla-ego', 'hantverket', 'ag', 'frantzen'];
+const TIMESLOT_SUPPORTED = ACTIVE_RESTAURANTS;
 
 // ── Availability helpers ─────────────────────────────────────────────
 function seededRand(seed) {
@@ -128,8 +132,10 @@ function renderSidebar() {
     const btn = document.createElement('button');
     btn.className = 'rest-item' + (r.id === currentRestaurantId ? ' active' : '');
     btn.dataset.id = r.id;
+    const paused = !ACTIVE_RESTAURANTS.includes(r.id);
+    if (paused) btn.classList.add('paused');
     btn.innerHTML = `
-      <div class="rest-item-name">${r.name}</div>
+      <div class="rest-item-name">${r.name}${paused ? ' <span class="rest-item-paused">Pausad</span>' : ''}</div>
       <div class="rest-item-cuisine">${r.cuisine}</div>
     `;
     btn.addEventListener('click', () => selectRestaurant(r.id));
@@ -546,4 +552,10 @@ setInterval(pollAlerts, 60 * 1000);
 renderSidebar();
 renderGuestPicker();
 renderPanel();
-RESTAURANTS.forEach(r => fetchAvailability(r.id));
+RESTAURANTS.forEach(r => {
+  if (ACTIVE_RESTAURANTS.includes(r.id)) {
+    fetchAvailability(r.id);
+  } else {
+    fetchState[r.id] = 'simulated';
+  }
+});
